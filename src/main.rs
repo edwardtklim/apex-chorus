@@ -23,6 +23,8 @@ enum Commands {
 enum ChorusCommands {
     Ask {
         prompt: String,
+        #[arg(long = "use")]
+        use_model: Option<String>,
     },
 }
 
@@ -33,16 +35,16 @@ async fn main() {
     match cli.command {
         Commands::Info => run_info(),
         Commands::Chorus { action } => match action {
-            ChorusCommands::Ask { prompt } => {
-                chorus::ask(&prompt).await;
+            ChorusCommands::Ask { prompt, use_model } => {
+                chorus::ask(&prompt, &use_model.unwrap_or_else(|| "claude".to_string())).await;
             }
         },
     }
 }
 
 fn run_info() {
-    use wmi::{COMLibrary, WMIConnection};
     use serde::Deserialize;
+    use wmi::{COMLibrary, WMIConnection};
 
     #[derive(Deserialize, Debug)]
     #[serde(rename = "Win32_Processor")]
