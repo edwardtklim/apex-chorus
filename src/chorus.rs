@@ -2,6 +2,29 @@ use reqwest::Client;
 use serde_json::json;
 use std::env;
 
+pub fn route_model(prompt: &str) -> &'static str {
+    let p = prompt.to_lowercase();
+
+    if p.contains("code") || p.contains("rust") || p.contains("bug") ||
+       p.contains("error") || p.contains("function") || p.contains("review") ||
+       p.contains("코드") || p.contains("버그") || p.contains("함수") {
+        "claude"
+    } else if p.contains("market") || p.contains("business") || p.contains("strategy") ||
+              p.contains("idea") || p.contains("revenue") || p.contains("growth") ||
+              p.contains("시장") || p.contains("전략") || p.contains("아이디어") {
+        "gpt"
+    } else if p.contains("latest") || p.contains("recent") || p.contains("news") ||
+              p.contains("today") || p.contains("2025") || p.contains("2026") ||
+              p.contains("최신") || p.contains("뉴스") || p.contains("오늘") {
+        "grok"
+    } else if p.contains("document") || p.contains("analyze") || p.contains("summarize") ||
+              p.contains("file") || p.contains("문서") || p.contains("분석") || p.contains("요약") {
+        "gemini"
+    } else {
+        "claude"
+    }
+}
+
 pub async fn ask(prompt: &str, model: &str) {
     match model {
         "gpt" => ask_gpt(prompt).await,

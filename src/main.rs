@@ -1,5 +1,6 @@
 mod chorus;
 
+use dotenv::dotenv;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -30,13 +31,18 @@ enum ChorusCommands {
 
 #[tokio::main]
 async fn main() {
+    dotenv().ok();
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Info => run_info(),
         Commands::Chorus { action } => match action {
             ChorusCommands::Ask { prompt, use_model } => {
-                chorus::ask(&prompt, &use_model.unwrap_or_else(|| "claude".to_string())).await;
+                let model = match use_model {
+                    Some(m) => m,
+                    None => chorus::route_model(&prompt).to_string(),
+                };
+                chorus::ask(&prompt, &model).await;
             }
         },
     }
