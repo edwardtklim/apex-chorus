@@ -1,6 +1,7 @@
 use reqwest::Client;
 use serde_json::json;
 use std::env;
+use sysinfo::System;
 
 pub fn route_model(prompt: &str) -> &'static str {
     let p = prompt.to_lowercase();
@@ -25,12 +26,32 @@ pub fn route_model(prompt: &str) -> &'static str {
     }
 }
 
+fn get_system_context() -> String {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let cpu_usage: f32 = sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>()
+        / sys.cpus().len() as f32;
+
+    let total_mem = sys.total_memory() / 1024 / 1024;
+    let used_mem = sys.used_memory() / 1024 / 1024;
+    let mem_percent = (used_mem as f32 / total_mem as f32) * 100.0;
+
+    format!(
+        "[System Context]\nCPU Usage: {:.1}%\nMemory: {}MB / {}MB ({:.1}%)\n",
+        cpu_usage, used_mem, total_mem, mem_percent
+    )
+}
+
 pub async fn ask(prompt: &str, model: &str) {
+    let context = get_system_context();
+    let full_prompt = format!("{}\nUser question: {}", context, prompt);
+
     match model {
-        "gpt" => ask_gpt(prompt).await,
-        "gemini" => ask_gemini(prompt).await,
-        "grok" => ask_grok(prompt).await,
-        _ => ask_claude(prompt).await,
+        "gpt" => ask_gpt(&full_prompt).await,
+        "gemini" => ask_gemini(&full_prompt).await,
+        "grok" => ask_grok(&full_prompt).await,
+        _ => ask_claude(&full_prompt).await,
     }
 }
 
