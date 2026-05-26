@@ -27,6 +27,23 @@ pub fn route_model(prompt: &str) -> &'static str {
 }
 
 fn get_system_context() -> String {
+    use wmi::{COMLibrary, WMIConnection};
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug)]
+    #[serde(rename = "Win32_Battery")]
+    struct Battery {
+        #[serde(rename = "EstimatedChargeRemaining")]
+        charge: u32,
+    }
+
+    #[derive(Deserialize, Debug)]
+    #[serde(rename = "Win32_VideoController")]
+    struct GPU {
+        #[serde(rename = "Name")]
+        name: String,
+    }
+
     let mut sys = System::new_all();
     sys.refresh_all();
 
@@ -37,15 +54,34 @@ fn get_system_context() -> String {
     let used_mem = sys.used_memory() / 1024 / 1024;
     let mem_percent = (used_mem as f32 / total_mem as f32) * 100.0;
 
-    format!(
+    let mut context = format!(
         "[System Context]\nCPU Usage: {:.1}%\nMemory: {}MB / {}MB ({:.1}%)\n",
         cpu_usage, used_mem, total_mem, mem_percent
-    )
+    );
+
+    if let Ok(com) = wmi::COMLibrary::new() {
+        if let Ok(wmi_con) = WMIConnection::new(com.clone()) {
+            let gpus: Vec<GPU> = wmi_con.query().unwrap_or_default();
+            for gpu in &gpus {
+                context.push_str(&format!("GPU: {}\n", gpu.name));
+            }
+            let batteries: Vec<Battery> = wmi_con.query().unwrap_or_default();
+            if !batteries.is_empty() {
+                context.push_str(&format!("Battery: {}%\n", batteries[0].charge));
+            }
+        }
+    }
+
+    context
 }
 
-pub async fn ask(prompt: &str, model: &str) {
-    let context = get_system_context();
-    let full_prompt = format!("{}\nUser question: {}", context, prompt);
+pub async fn ask(prompt: &str, model: &str, no_context: bool) {
+    let full_prompt = if no_context {
+        prompt.to_string()
+    } else {
+        let context = get_system_context();
+        format!("{}\nUser question: {}", context, prompt)
+    };
 
     match model {
         "gpt" => ask_gpt(&full_prompt).await,
@@ -177,4 +213,19 @@ async fn handle_gemini(res: Result<reqwest::Response, reqwest::Error>) {
         }
         Err(e) => println!("Request failed: {}", e),
     }
+}
+pub fn show_models() {
+    let models = [
+        ("claude", "ANTHROPIC_API_KEY", "Code / Architecture"),
+        ("gpt",    "OPENAI_API_KEY",    "Strategy / Business"),
+        ("gemini", "GEMINI_API_KEY",    "Docs / Analysis"),
+        ("grok",   "GROK_API_KEY",      "Search / Latest info"),
+    ];
+
+    println!("=== APEX Chorus — Connected Models ===\n");
+    for (name, key, role) in &models {
+        let status = if env::var(key).is_ok() { "✓" } else { "✗" };
+        println!("{} {:8} — {}", status, name, role);
+    }
+    println!();
 }

@@ -26,7 +26,10 @@ enum ChorusCommands {
         prompt: String,
         #[arg(long = "use")]
         use_model: Option<String>,
+        #[arg(long = "no-context")]
+        no_context: bool,
     },
+    Models,
 }
 
 #[tokio::main]
@@ -37,12 +40,20 @@ async fn main() {
     match cli.command {
         Commands::Info => run_info(),
         Commands::Chorus { action } => match action {
-            ChorusCommands::Ask { prompt, use_model } => {
-                let model = match use_model {
-                    Some(m) => m,
-                    None => chorus::route_model(&prompt).to_string(),
+            ChorusCommands::Ask { prompt, use_model, no_context } => {
+                let (model, auto) = match use_model {
+                    Some(m) => (m, false),
+                    None => (chorus::route_model(&prompt).to_string(), true),
                 };
-                chorus::ask(&prompt, &model).await;
+                if auto {
+                    println!("→ Auto-routed to: {}\n", model);
+                } else {
+                    println!("→ Using: {}\n", model);
+                }
+                chorus::ask(&prompt, &model, no_context).await;
+            }
+            ChorusCommands::Models => {
+                chorus::show_models();
             }
         },
     }
