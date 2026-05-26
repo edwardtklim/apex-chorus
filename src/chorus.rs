@@ -27,8 +27,8 @@ pub fn route_model(prompt: &str) -> &'static str {
 }
 
 fn get_system_context() -> String {
-    use wmi::{COMLibrary, WMIConnection};
     use serde::Deserialize;
+    use wmi::{COMLibrary, WMIConnection};
 
     #[derive(Deserialize, Debug)]
     #[serde(rename = "Win32_Battery")]
@@ -59,8 +59,8 @@ fn get_system_context() -> String {
         cpu_usage, used_mem, total_mem, mem_percent
     );
 
-    if let Ok(com) = wmi::COMLibrary::new() {
-        if let Ok(wmi_con) = WMIConnection::new(com.clone()) {
+    if let Ok(com) = COMLibrary::new() {
+        if let Ok(wmi_con) = WMIConnection::new(com) {
             let gpus: Vec<GPU> = wmi_con.query().unwrap_or_default();
             for gpu in &gpus {
                 context.push_str(&format!("GPU: {}\n", gpu.name));
@@ -83,18 +83,35 @@ pub async fn ask(prompt: &str, model: &str, no_context: bool) {
         format!("{}\nUser question: {}", context, prompt)
     };
 
-    match model {
-        "gpt" => ask_gpt(&full_prompt).await,
-        "gemini" => ask_gemini(&full_prompt).await,
-        "grok" => ask_grok(&full_prompt).await,
-        _ => ask_claude(&full_prompt).await,
+    let fallback_order: Vec<&str> = match model {
+        "gpt"    => vec!["gpt",    "claude", "grok", "gemini"],
+        "gemini" => vec!["gemini", "claude", "gpt",  "grok"],
+        "grok"   => vec!["grok",   "claude", "gpt",  "gemini"],
+        _        => vec!["claude", "gpt",    "grok", "gemini"],
+    };
+
+    for (i, m) in fallback_order.iter().enumerate() {
+        if i > 0 {
+            println!("⚠ Falling back to: {}\n", m);
+        }
+        let success = match *m {
+            "gpt"    => try_gpt(&full_prompt).await,
+            "gemini" => try_gemini(&full_prompt).await,
+            "grok"   => try_grok(&full_prompt).await,
+            _        => try_claude(&full_prompt).await,
+        };
+        if success {
+            return;
+        }
     }
+
+    println!("✗ All models failed. Check your API keys.");
 }
 
-async fn ask_claude(prompt: &str) {
+async fn try_claude(prompt: &str) -> bool {
     let api_key = match env::var("ANTHROPIC_API_KEY") {
         Ok(k) => k,
-        Err(_) => { println!("Error: ANTHROPIC_API_KEY not set"); return; }
+        Err(_) => { println!("✗ Claude: ANTHROPIC_API_KEY not set"); return false; }
     };
     println!("Asking Claude...\n");
     let client = Client::new();
@@ -109,13 +126,26 @@ async fn ask_claude(prompt: &str) {
             "messages": [{ "role": "user", "content": prompt }]
         }))
         .send().await;
-    handle_anthropic(res).await;
+
+    match res {
+        Ok(r) => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            if let Some(text) = body["content"][0]["text"].as_str() {
+                println!("{}", text);
+                true
+            } else {
+                println!("✗ Claude error: {:?}", body["error"]["message"]);
+                false
+            }
+        }
+        Err(e) => { println!("✗ Claude request failed: {}", e); false }
+    }
 }
 
-async fn ask_gpt(prompt: &str) {
+async fn try_gpt(prompt: &str) -> bool {
     let api_key = match env::var("OPENAI_API_KEY") {
         Ok(k) => k,
-        Err(_) => { println!("Error: OPENAI_API_KEY not set"); return; }
+        Err(_) => { println!("✗ GPT: OPENAI_API_KEY not set"); return false; }
     };
     println!("Asking GPT...\n");
     let client = Client::new();
@@ -129,13 +159,26 @@ async fn ask_gpt(prompt: &str) {
             "messages": [{ "role": "user", "content": prompt }]
         }))
         .send().await;
-    handle_openai(res).await;
+
+    match res {
+        Ok(r) => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            if let Some(text) = body["choices"][0]["message"]["content"].as_str() {
+                println!("{}", text);
+                true
+            } else {
+                println!("✗ GPT error: {:?}", body["error"]["message"]);
+                false
+            }
+        }
+        Err(e) => { println!("✗ GPT request failed: {}", e); false }
+    }
 }
 
-async fn ask_gemini(prompt: &str) {
+async fn try_gemini(prompt: &str) -> bool {
     let api_key = match env::var("GEMINI_API_KEY") {
         Ok(k) => k,
-        Err(_) => { println!("Error: GEMINI_API_KEY not set"); return; }
+        Err(_) => { println!("✗ Gemini: GEMINI_API_KEY not set"); return false; }
     };
     println!("Asking Gemini...\n");
     let client = Client::new();
@@ -150,13 +193,26 @@ async fn ask_gemini(prompt: &str) {
             "contents": [{ "parts": [{ "text": prompt }] }]
         }))
         .send().await;
-    handle_gemini(res).await;
+
+    match res {
+        Ok(r) => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            if let Some(text) = body["candidates"][0]["content"]["parts"][0]["text"].as_str() {
+                println!("{}", text);
+                true
+            } else {
+                println!("✗ Gemini error: {:?}", body["error"]["message"]);
+                false
+            }
+        }
+        Err(e) => { println!("✗ Gemini request failed: {}", e); false }
+    }
 }
 
-async fn ask_grok(prompt: &str) {
+async fn try_grok(prompt: &str) -> bool {
     let api_key = match env::var("GROK_API_KEY") {
         Ok(k) => k,
-        Err(_) => { println!("Error: GROK_API_KEY not set"); return; }
+        Err(_) => { println!("✗ Grok: GROK_API_KEY not set"); return false; }
     };
     println!("Asking Grok...\n");
     let client = Client::new();
@@ -170,50 +226,22 @@ async fn ask_grok(prompt: &str) {
             "messages": [{ "role": "user", "content": prompt }]
         }))
         .send().await;
-    handle_openai(res).await;
-}
 
-async fn handle_anthropic(res: Result<reqwest::Response, reqwest::Error>) {
-    match res {
-        Ok(r) => {
-            let body: serde_json::Value = r.json().await.unwrap_or_default();
-            if let Some(text) = body["content"][0]["text"].as_str() {
-                println!("{}", text);
-            } else {
-                println!("Error: {:?}", body);
-            }
-        }
-        Err(e) => println!("Request failed: {}", e),
-    }
-}
-
-async fn handle_openai(res: Result<reqwest::Response, reqwest::Error>) {
     match res {
         Ok(r) => {
             let body: serde_json::Value = r.json().await.unwrap_or_default();
             if let Some(text) = body["choices"][0]["message"]["content"].as_str() {
                 println!("{}", text);
+                true
             } else {
-                println!("Error: {:?}", body);
+                println!("✗ Grok error: {:?}", body["error"]["message"]);
+                false
             }
         }
-        Err(e) => println!("Request failed: {}", e),
+        Err(e) => { println!("✗ Grok request failed: {}", e); false }
     }
 }
 
-async fn handle_gemini(res: Result<reqwest::Response, reqwest::Error>) {
-    match res {
-        Ok(r) => {
-            let body: serde_json::Value = r.json().await.unwrap_or_default();
-            if let Some(text) = body["candidates"][0]["content"]["parts"][0]["text"].as_str() {
-                println!("{}", text);
-            } else {
-                println!("Error: {:?}", body);
-            }
-        }
-        Err(e) => println!("Request failed: {}", e),
-    }
-}
 pub fn show_models() {
     let models = [
         ("claude", "ANTHROPIC_API_KEY", "Code / Architecture"),
