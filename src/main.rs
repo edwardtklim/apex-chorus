@@ -1,4 +1,8 @@
 mod chorus;
+mod thermals;
+mod gpu;
+mod bench;
+mod fps;
 
 use dotenv::dotenv;
 use clap::{Parser, Subcommand};
@@ -14,9 +18,50 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Info,
+    Thermals {
+        #[arg(long)]
+        watch: bool,
+        #[arg(long, default_value_t = 1000)]
+        interval: u64,
+    },
+    Gpu {
+        #[command(subcommand)]
+        action: GpuCommands,
+    },
+    Bench {
+        #[command(subcommand)]
+        action: BenchCommands,
+    },
+    Fps {
+        #[arg(long, default_value_t = 5)]
+        seconds: u64,
+    },
     Chorus {
         #[command(subcommand)]
         action: ChorusCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum GpuCommands {
+    Status,
+}
+
+#[derive(Subcommand)]
+enum BenchCommands {
+    /// CPU single + multi-thread benchmark (prime sieve + matrix multiply)
+    Cpu,
+    /// GPU monitor — samples nvidia-smi while you run a real load
+    Gpu {
+        #[arg(long, default_value_t = 10)]
+        seconds: u64,
+    },
+    /// Everyday workload — file compression + image resize/encode
+    Everyday,
+    /// Run all benchmarks in sequence
+    All {
+        #[arg(long, default_value_t = 10)]
+        gpu_seconds: u64,
     },
 }
 
@@ -39,6 +84,29 @@ async fn main() {
 
     match cli.command {
         Commands::Info => run_info(),
+        Commands::Thermals { watch, interval } => {
+            if watch {
+                thermals::run_watch(interval);
+            } else {
+                thermals::run_once();
+            }
+        }
+        Commands::Gpu { action } => match action {
+            GpuCommands::Status => gpu::run_status(),
+        },
+        Commands::Bench { action } => match action {
+            BenchCommands::Cpu => bench::run_cpu(),
+            BenchCommands::Gpu { seconds } => bench::run_gpu_monitor(seconds),
+            BenchCommands::Everyday => bench::run_everyday(),
+            BenchCommands::All { gpu_seconds } => {
+                bench::run_cpu();
+                println!();
+                bench::run_everyday();
+                println!();
+                bench::run_gpu_monitor(gpu_seconds);
+            }
+        },
+        Commands::Fps { seconds } => fps::run(seconds),
         Commands::Chorus { action } => match action {
             ChorusCommands::Ask { prompt, use_model, no_context } => {
                 let (model, auto) = match use_model {
