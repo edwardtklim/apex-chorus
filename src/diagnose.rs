@@ -120,8 +120,11 @@ fn collect() -> Snapshot {
         None => "N/A (센서 읽기 실패 — 관리자 권한 필요)".to_string(),
     };
     let summary = format!(
-        "- 현재 전원 모드: {} ({})\n- 최고 온도: {}",
-        plan_label, plan_guid, temp_str
+        "- 현재 전원 모드: {} ({})\n- 최고 온도: {}\n{}",
+        plan_label,
+        plan_guid,
+        temp_str,
+        crate::drivers::problem_summary()
     );
     Snapshot {
         max_temp_c,

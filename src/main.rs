@@ -6,6 +6,7 @@ mod fps;
 mod diagnose;
 mod checkpoint;
 mod daemon;
+mod drivers;
 
 use dotenv::dotenv;
 use clap::{Parser, Subcommand};
@@ -44,6 +45,8 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
+    /// 드라이버/장치 상태 읽기 — 문제 장치(노란 느낌표) 탐지 (읽기 전용)
+    Drivers,
     /// 정상 상태 저장/복원 (블루스크린·AI 오판 후 되돌리기)
     Checkpoint {
         #[command(subcommand)]
@@ -138,6 +141,7 @@ async fn main() {
         },
         Commands::Fps { seconds } => fps::run(seconds),
         Commands::Diagnose { fix } => diagnose::run(fix).await,
+        Commands::Drivers => drivers::run(),
         Commands::Checkpoint { action } => match action {
             CheckpointCommands::Save => checkpoint::save(),
             CheckpointCommands::List => checkpoint::list(),
