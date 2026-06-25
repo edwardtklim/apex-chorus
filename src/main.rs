@@ -3,6 +3,7 @@ mod thermals;
 mod gpu;
 mod bench;
 mod fps;
+mod diagnose;
 
 use dotenv::dotenv;
 use clap::{Parser, Subcommand};
@@ -35,6 +36,11 @@ enum Commands {
     Fps {
         #[arg(long, default_value_t = 5)]
         seconds: u64,
+    },
+    /// AI가 시스템 상태를 진단하고, 승인 시 안전·가역 조치를 실행 (Core의 첫 세포)
+    Diagnose {
+        #[arg(long)]
+        fix: bool,
     },
     Chorus {
         #[command(subcommand)]
@@ -107,6 +113,7 @@ async fn main() {
             }
         },
         Commands::Fps { seconds } => fps::run(seconds),
+        Commands::Diagnose { fix } => diagnose::run(fix).await,
         Commands::Chorus { action } => match action {
             ChorusCommands::Ask { prompt, use_model, no_context } => {
                 let (model, auto) = match use_model {

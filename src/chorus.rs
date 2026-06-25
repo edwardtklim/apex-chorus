@@ -242,6 +242,33 @@ async fn try_grok(prompt: &str) -> bool {
     }
 }
 
+/// Like `ask`, but returns the AI's text instead of printing it.
+/// Used by `diagnose` for the "reason" stage of the action loop.
+pub async fn query_text(prompt: &str) -> Option<String> {
+    if let Ok(api_key) = env::var("ANTHROPIC_API_KEY") {
+        let client = Client::new();
+        if let Ok(r) = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&json!({
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1024,
+                "messages": [{ "role": "user", "content": prompt }]
+            }))
+            .send()
+            .await
+        {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            if let Some(text) = body["content"][0]["text"].as_str() {
+                return Some(text.to_string());
+            }
+        }
+    }
+    None
+}
+
 pub fn show_models() {
     let models = [
         ("claude", "ANTHROPIC_API_KEY", "Code / Architecture"),
