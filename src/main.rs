@@ -7,6 +7,7 @@ mod diagnose;
 mod checkpoint;
 mod daemon;
 mod drivers;
+mod doctor;
 
 use dotenv::dotenv;
 use clap::{Parser, Subcommand};
@@ -45,6 +46,8 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
+    /// APEX Doctor — "왜 느려?" 한 명령으로 전체 스캔 + AI 종합 진단 (읽기 전용)
+    Doctor,
     /// 드라이버/장치 상태 읽기 — 문제 장치(노란 느낌표) 탐지 (읽기 전용)
     Drivers,
     /// 정상 상태 저장/복원 (블루스크린·AI 오판 후 되돌리기)
@@ -141,6 +144,7 @@ async fn main() {
         },
         Commands::Fps { seconds } => fps::run(seconds),
         Commands::Diagnose { fix } => diagnose::run(fix).await,
+        Commands::Doctor => doctor::run().await,
         Commands::Drivers => drivers::run(),
         Commands::Checkpoint { action } => match action {
             CheckpointCommands::Save => checkpoint::save(),
