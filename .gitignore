@@ -20,6 +20,7 @@ target
 # Velox runtime state (not source)
 velox_actions.log
 velox_checkpoints.txt
+velox_daemon.log
 daemon_out.txt
 
 # RustRover / JetBrains

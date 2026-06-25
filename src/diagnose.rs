@@ -338,12 +338,17 @@ pub async fn run(fix: bool) {
 // ---------------- daemon이 호출하는 1회 점검 ----------------
 
 /// 데몬의 한 틱. auto=true 면 Confirmer 승인 시 체크포인트 후 자동 실행(사람 승인 생략).
-pub async fn daemon_tick(auto: bool) {
+/// 반환: AI 파이프라인을 가동했으면 true (데몬이 쿨다운 설정에 사용).
+pub async fn daemon_tick(auto: bool, allow_ai: bool) -> bool {
     let snap = collect();
     println!("· {}", snap.heartbeat());
 
     if !snap.is_hot() {
-        return; // 정상 → 감시만
+        return false; // 정상 → 감시만
+    }
+    if !allow_ai {
+        println!("  ⚠ 임계 초과 — 쿨다운 중이라 AI 생략");
+        return false;
     }
     println!("  ⚠ 임계 초과 → 3단계 AI 파이프라인 가동");
 
@@ -372,4 +377,5 @@ pub async fn daemon_tick(auto: bool) {
             }
         }
     }
+    true
 }
