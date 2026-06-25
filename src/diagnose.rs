@@ -1,27 +1,23 @@
-// APEX Velox — diagnose
+// APEX Velox — diagnose  (Core의 첫 세포)
 //
-// 이것이 APEX Core(AI+기기 제어 연동)의 첫 세포다.
-// Action Loop: 읽기 → 추론(AI 구조화 제안) → 화이트리스트 검증 → [승인] → 실행 → 검증 → 롤백
+// Action Loop: 읽기 → 3단계 AI → 화이트리스트 → [Confirmer] → [승인] → 체크포인트 → 실행 → 검증 → 롤백
 //
-// 안전 원칙(Security by Default):
-//   - AI는 "명령을 생성"하지 않는다. 미리 정의된 화이트리스트에서 "선택"만 한다.
-//   - 실제 명령/GUID는 Rust에 하드코딩 → AI가 헛소리/인젝션을 당해도 임의 실행 불가.
-//   - 모든 동작은 되돌릴 수 있어야 함(rollback).
-//   - 사람이 명시적으로 승인(y)해야만 실행 (--fix).
-//   - 실행 후 반드시 검증 + 로그 기록.
+// 3단계 AI (오래된 꿈, 키 3개 활용):
+//   1) Customer (Claude)  — 의도/상황 이해
+//   2) Engineer (GPT)     — 구조화된 조치 제안 (화이트리스트 JSON)
+//   3) Confirmer (Gemini) — Engineer 조치를 독립 검수 → APPROVE/REJECT
+//
+// 안전 원칙: AI는 메뉴에서 "선택"만(명령 생성 X) · 모든 동작 가역 · 실행 전 자동 체크포인트 · 사람 최종 승인.
 
 use serde::Deserialize;
 use std::io::{self, Write};
 use std::process::Command;
 use wmi::{COMLibrary, WMIConnection};
 
-/// 이 온도(℃) 이상이면 규칙 기반 대체 제안이 전원 모드 하향을 제안.
 const TEMP_WARN_C: f32 = 85.0;
-/// 실행 기록 로그 파일.
 const LOG_FILE: &str = "velox_actions.log";
 
-/// 전원 구성표 화이트리스트. AI는 이 key 중에서만 고를 수 있다.
-/// (key, 표시이름, GUID) — GUID는 Windows 기본값, 하드코딩.
+/// 전원 구성표 화이트리스트. AI는 이 key 중에서만 고를 수 있다. (GUID 하드코딩)
 fn plan_by_key(key: &str) -> Option<(&'static str, &'static str)> {
     match key {
         "balanced" => Some(("Balanced", "381b4222-f694-41f0-9685-ff5bb260df2e")),
@@ -41,10 +37,23 @@ struct ThermalZone {
 struct Snapshot {
     max_temp_c: Option<f32>,
     plan_guid: String,
+    plan_label: String,
     summary: String,
 }
 
-/// 화이트리스트된 안전·가역 동작만 존재한다. (스캐폴드: 현재 1종)
+impl Snapshot {
+    fn is_hot(&self) -> bool {
+        self.max_temp_c.map_or(false, |t| t >= TEMP_WARN_C)
+    }
+    fn heartbeat(&self) -> String {
+        let temp = self
+            .max_temp_c
+            .map(|c| format!("{:.1}°C", c))
+            .unwrap_or_else(|| "N/A".to_string());
+        format!("전원={} 온도={}", self.plan_label, temp)
+    }
+}
+
 enum Action {
     SetPowerPlan {
         label: &'static str,
@@ -54,11 +63,8 @@ enum Action {
     None,
 }
 
-/// AI가 돌려주는 구조화 제안. 자유 텍스트가 아니라 이 스키마로만 받는다.
 #[derive(Deserialize, Default)]
 struct AiProposal {
-    #[serde(default)]
-    diagnosis: String,
     #[serde(default)]
     action: String,
     #[serde(default)]
@@ -67,7 +73,13 @@ struct AiProposal {
     reason: String,
 }
 
-// ---------------- [1] 읽기 (Velox) ----------------
+struct Pipeline {
+    transcript: String,
+    action: Action,
+    confirmed: bool,
+}
+
+// ---------------- [1] 읽기 ----------------
 
 fn read_active_plan() -> (String, String) {
     if let Ok(out) = Command::new("powercfg").arg("/getactivescheme").output() {
@@ -114,40 +126,15 @@ fn collect() -> Snapshot {
     Snapshot {
         max_temp_c,
         plan_guid,
+        plan_label,
         summary,
     }
 }
 
-// ---------------- [2] 추론: AI 구조화 제안 ----------------
+// ---------------- 화이트리스트 검증 ----------------
 
-/// AI에게 시스템 상태를 주고, 화이트리스트 중 하나를 JSON으로 "선택"하게 한다.
-/// 반환: (사람이 읽을 진단 텍스트, 검증 통과한 Action)
-async fn ai_propose(snap: &Snapshot) -> Option<(String, Action)> {
-    let prompt = format!(
-        "너는 APEX Velox의 시스템 진단 엔진이다. 아래 시스템 상태를 보고 판단해라.\n\n\
-         [엄격한 규칙]\n\
-         - 반드시 아래 JSON 한 개로만 답한다. 그 외 설명/마크다운/코드펜스 금지.\n\
-         - action 은 정확히 \"set_power_plan\" 또는 \"none\" 중 하나.\n\
-         - action 이 \"set_power_plan\" 이면 target 은 정확히 \"balanced\", \"high_performance\", \"power_saver\" 중 하나.\n\
-         - 안전하고 되돌릴 수 있는 경우에만 조치를 제안하고, 애매하면 action=\"none\".\n\n\
-         [JSON 스키마]\n\
-         {{\"diagnosis\":\"2~3줄 한국어 진단\",\"action\":\"set_power_plan|none\",\"target\":\"balanced|high_performance|power_saver|null\",\"reason\":\"왜 이 조치인지 한 줄\"}}\n\n\
-         [시스템 상태]\n{}",
-        snap.summary
-    );
-
-    let raw = crate::chorus::query_text(&prompt).await?;
-    let json_str = extract_json(&raw)?;
-    let p: AiProposal = serde_json::from_str(json_str).ok()?;
-
-    let diagnosis = if p.reason.trim().is_empty() {
-        p.diagnosis.clone()
-    } else {
-        format!("{}\n→ 이유: {}", p.diagnosis.trim(), p.reason.trim())
-    };
-
-    // ★ 화이트리스트 검증: AI의 선택을 하드코딩된 메뉴와 대조. 통과한 것만 Action이 됨.
-    let action = match p.action.as_str() {
+fn validate(p: &AiProposal, snap: &Snapshot) -> Action {
+    match p.action.as_str() {
         "set_power_plan" => {
             let key = p.target.as_deref().unwrap_or("");
             match plan_by_key(key) {
@@ -158,46 +145,93 @@ async fn ai_propose(snap: &Snapshot) -> Option<(String, Action)> {
                         rollback_guid: snap.plan_guid.clone(),
                     }
                 }
-                _ => Action::None, // 알 수 없는 target 이거나 이미 그 모드 → 무시
+                _ => Action::None,
             }
         }
         _ => Action::None,
-    };
-
-    Some((diagnosis, action))
-}
-
-/// AI 응답에서 첫 '{' ~ 마지막 '}' 사이만 추출 (코드펜스/잡텍스트 방어).
-fn extract_json(s: &str) -> Option<&str> {
-    let start = s.find('{')?;
-    let end = s.rfind('}')?;
-    if end > start {
-        Some(&s[start..=end])
-    } else {
-        None
     }
 }
 
-// ---------------- [3] 대체 제안 (AI 불가 시 규칙 기반) ----------------
+fn extract_json(s: &str) -> Option<&str> {
+    let start = s.find('{')?;
+    let end = s.rfind('}')?;
+    (end > start).then(|| &s[start..=end])
+}
+
+// ---------------- [2] 3단계 AI 파이프라인 ----------------
+
+async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
+    // 1) Customer (Claude) — 의도/상황 이해
+    let intent = crate::chorus::query_text_with(
+        "claude",
+        &format!(
+            "다음 시스템 상태에서 사용자가 가장 걱정할 점이나 원하는 바를 한국어 한 줄로 요약:\n{}",
+            snap.summary
+        ),
+    )
+    .await
+    .unwrap_or_else(|| "(의도 파악 실패)".to_string());
+
+    // 2) Engineer (GPT) — 구조화된 조치 제안
+    let eng_prompt = format!(
+        "너는 시스템 엔지니어 AI다.\n사용자 의도: {}\n시스템 상태:\n{}\n\n\
+         아래 JSON 한 개로만 답하라(설명/마크다운 금지).\n\
+         {{\"action\":\"set_power_plan|none\",\"target\":\"balanced|high_performance|power_saver|null\",\"reason\":\"한 줄\"}}\n\
+         규칙: 안전·가역한 경우에만 조치 제안, 애매하면 action=\"none\".",
+        intent.trim(),
+        snap.summary
+    );
+    let eng_raw = crate::chorus::query_text_with("gpt", &eng_prompt).await?;
+    let proposal: AiProposal = serde_json::from_str(extract_json(&eng_raw)?).ok()?;
+    let action = validate(&proposal, snap);
+
+    // 3) Confirmer (Gemini) — 독립 검수
+    let (confirmed, verdict) = match &action {
+        Action::None => (false, "제안된 조치 없음".to_string()),
+        Action::SetPowerPlan { label, .. } => {
+            let conf_prompt = format!(
+                "너는 검수 AI다. 제안된 조치: 전원 모드를 '{}'(으)로 변경.\n시스템 상태:\n{}\n\n\
+                 안전하고 합리적이면 'APPROVE', 아니면 'REJECT'로 시작해 한국어 한 줄 이유.",
+                label, snap.summary
+            );
+            let r = crate::chorus::query_text_with("gemini", &conf_prompt)
+                .await
+                .unwrap_or_else(|| "REJECT (검수 AI 응답 없음)".to_string());
+            (r.to_uppercase().contains("APPROVE"), r)
+        }
+    };
+
+    let transcript = format!(
+        "  1·Customer(Claude): {}\n  2·Engineer(GPT):   action={} ({})\n  3·Confirmer(Gemini): {}",
+        intent.trim(),
+        proposal.action,
+        proposal.reason.trim(),
+        verdict.trim()
+    );
+
+    Some(Pipeline {
+        transcript,
+        action,
+        confirmed,
+    })
+}
 
 fn propose_rule_based(snap: &Snapshot) -> Action {
-    if let Some(t) = snap.max_temp_c {
-        if t >= TEMP_WARN_C {
-            if let Some((label, guid)) = plan_by_key("balanced") {
-                if guid.to_lowercase() != snap.plan_guid.to_lowercase() {
-                    return Action::SetPowerPlan {
-                        label,
-                        guid,
-                        rollback_guid: snap.plan_guid.clone(),
-                    };
-                }
+    if snap.is_hot() {
+        if let Some((label, guid)) = plan_by_key("balanced") {
+            if guid.to_lowercase() != snap.plan_guid.to_lowercase() {
+                return Action::SetPowerPlan {
+                    label,
+                    guid,
+                    rollback_guid: snap.plan_guid.clone(),
+                };
             }
         }
     }
     Action::None
 }
 
-// ---------------- [5] 실행 ----------------
+// ---------------- 실행 ----------------
 
 fn apply_power_plan(guid: &str) -> bool {
     Command::new("powercfg")
@@ -205,6 +239,26 @@ fn apply_power_plan(guid: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+fn execute_with_safety(label: &str, guid: &str, rollback_guid: &str) {
+    // 위험 동작 전 자동 체크포인트 (AI 오판/블루스크린 대비)
+    crate::checkpoint::save_silent();
+    println!("[체크포인트 저장됨 — 문제 시 `velox checkpoint restore`]");
+
+    if !apply_power_plan(guid) {
+        println!("✗ 실행 실패 (권한/모드 부재).");
+        return;
+    }
+    let (new_guid, new_label) = read_active_plan();
+    let verified = new_guid.to_lowercase() == guid.to_lowercase();
+    println!(
+        "검증: 현재 전원 모드 = {} {}",
+        new_label,
+        if verified { "✓" } else { "✗ (불일치)" }
+    );
+    println!("되돌리려면: powercfg /setactive {}", rollback_guid);
+    log_action(label, guid, rollback_guid, verified);
 }
 
 fn log_action(label: &str, guid: &str, rollback: &str, verified: bool) {
@@ -218,44 +272,44 @@ fn log_action(label: &str, guid: &str, rollback: &str, verified: bool) {
     }
 }
 
-// ---------------- 메인 루프 ----------------
+// ---------------- CLI: velox diagnose [--fix] ----------------
 
 pub async fn run(fix: bool) {
-    println!("=== APEX Velox — diagnose ===\n");
-
-    // [1] 읽기
+    println!("=== APEX Velox — diagnose (3단계 AI) ===\n");
     let snap = collect();
-    println!("[1] 시스템 상태 (읽기)\n{}\n", snap.summary);
+    println!("[1] 시스템 상태\n{}\n", snap.summary);
 
-    // [2] 추론: AI가 구조화된 조치를 선택 (실패 시 규칙 기반 대체)
-    println!("[2] AI 진단 + 조치 선택 (추론)...");
-    let action = match ai_propose(&snap).await {
-        Some((diagnosis, act)) => {
-            println!("{}\n", diagnosis.trim());
-            act
+    println!("[2] 3단계 AI 파이프라인...");
+    let (action, confirmed) = match ai_pipeline(&snap).await {
+        Some(p) => {
+            println!("{}\n", p.transcript);
+            (p.action, p.confirmed)
         }
         None => {
-            println!("(AI 사용 불가/응답 파싱 실패 — 규칙 기반으로 대체)\n");
-            propose_rule_based(&snap)
+            println!("(AI 사용 불가 — 규칙 기반 대체)\n");
+            (propose_rule_based(&snap), true)
         }
     };
 
-    // [3] 화이트리스트 검증 결과
     match &action {
         Action::None => {
-            println!("[3] 제안: 적용할 안전한 조치 없음 (양호하거나 수동 확인 필요).");
+            println!("[3] 결론: 적용할 안전한 조치 없음.");
             return;
         }
         Action::SetPowerPlan { label, .. } => {
+            if !confirmed {
+                println!("[3] Confirmer AI가 반려함 → 실행 차단 🛑 (제안: 전원 모드 → {})", label);
+                return;
+            }
             println!(
-                "[3] AI가 선택한 조치: 전원 모드 → '{}'  (화이트리스트 검증 통과 ✓, 되돌릴 수 있음)",
+                "[3] 조치 제안: 전원 모드 → '{}' (화이트리스트 ✓ · Confirmer ✓ · 가역)",
                 label
             );
         }
     }
 
     if !fix {
-        println!("\n실제로 적용하려면:  velox diagnose --fix");
+        println!("\n실제 적용: velox diagnose --fix");
         return;
     }
 
@@ -265,35 +319,54 @@ pub async fn run(fix: bool) {
         rollback_guid,
     } = action
     {
-        // [4] 승인 (사람이 최종 결정)
-        print!("\n[4] 이 조치를 적용할까요? (y/N): ");
+        print!("\n[4] 적용할까요? (y/N): ");
         io::stdout().flush().ok();
         let mut input = String::new();
         io::stdin().read_line(&mut input).ok();
         if input.trim().to_lowercase() != "y" {
-            println!("취소됨 — 아무 변경 없음.");
+            println!("취소됨.");
             return;
         }
-
-        // [5] 실행
         println!("[5] 실행: 전원 모드 → {}", label);
-        if !apply_power_plan(guid) {
-            println!("✗ 실행 실패 (권한 문제이거나 해당 전원 모드가 없을 수 있음).");
-            return;
+        execute_with_safety(label, guid, &rollback_guid);
+    }
+}
+
+// ---------------- daemon이 호출하는 1회 점검 ----------------
+
+/// 데몬의 한 틱. auto=true 면 Confirmer 승인 시 체크포인트 후 자동 실행(사람 승인 생략).
+pub async fn daemon_tick(auto: bool) {
+    let snap = collect();
+    println!("· {}", snap.heartbeat());
+
+    if !snap.is_hot() {
+        return; // 정상 → 감시만
+    }
+    println!("  ⚠ 임계 초과 → 3단계 AI 파이프라인 가동");
+
+    let (action, confirmed) = match ai_pipeline(&snap).await {
+        Some(p) => {
+            println!("{}", p.transcript);
+            (p.action, p.confirmed)
         }
+        None => (propose_rule_based(&snap), true),
+    };
 
-        // [6] 검증
-        let (new_guid, new_label) = read_active_plan();
-        let verified = new_guid.to_lowercase() == guid.to_lowercase();
-        println!(
-            "[6] 검증: 현재 전원 모드 = {} {}",
-            new_label,
-            if verified { "✓" } else { "✗ (불일치)" }
-        );
-
-        // [7] 롤백 안내 + 로그
-        println!("[7] 되돌리려면:  powercfg /setactive {}", rollback_guid);
-        log_action(label, guid, &rollback_guid, verified);
-        println!("\n기록됨 → {}", LOG_FILE);
+    match action {
+        Action::None => println!("  → 조치 없음"),
+        Action::SetPowerPlan {
+            label,
+            guid,
+            rollback_guid,
+        } => {
+            if !confirmed {
+                println!("  → Confirmer 반려 🛑 실행 안 함");
+            } else if auto {
+                println!("  → AUTO: {} 적용", label);
+                execute_with_safety(label, guid, &rollback_guid);
+            } else {
+                println!("  → 제안: 전원 모드 → {} (실행하려면 --auto 또는 `velox diagnose --fix`)", label);
+            }
+        }
     }
 }

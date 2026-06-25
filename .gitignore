@@ -17,5 +17,10 @@ target
 # cargo mutants
 **/mutants.out*/
 
+# Velox runtime state (not source)
+velox_actions.log
+velox_checkpoints.txt
+daemon_out.txt
+
 # RustRover / JetBrains
 #.idea/

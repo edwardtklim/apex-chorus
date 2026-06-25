@@ -4,6 +4,8 @@ mod gpu;
 mod bench;
 mod fps;
 mod diagnose;
+mod checkpoint;
+mod daemon;
 
 use dotenv::dotenv;
 use clap::{Parser, Subcommand};
@@ -37,10 +39,22 @@ enum Commands {
         #[arg(long, default_value_t = 5)]
         seconds: u64,
     },
-    /// AI가 시스템 상태를 진단하고, 승인 시 안전·가역 조치를 실행 (Core의 첫 세포)
+    /// AI가 시스템 상태를 진단하고, 승인 시 안전·가역 조치를 실행 (3단계 AI)
     Diagnose {
         #[arg(long)]
         fix: bool,
+    },
+    /// 정상 상태 저장/복원 (블루스크린·AI 오판 후 되돌리기)
+    Checkpoint {
+        #[command(subcommand)]
+        action: CheckpointCommands,
+    },
+    /// 상시 감시 데몬 — 일정 간격으로 점검, 임계치 시 AI 파이프라인 가동
+    Daemon {
+        #[arg(long, default_value_t = 30)]
+        interval: u64,
+        #[arg(long)]
+        auto: bool,
     },
     Chorus {
         #[command(subcommand)]
@@ -69,6 +83,16 @@ enum BenchCommands {
         #[arg(long, default_value_t = 10)]
         gpu_seconds: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum CheckpointCommands {
+    /// 현재 정상 상태 저장
+    Save,
+    /// 저장된 체크포인트 목록
+    List,
+    /// 마지막 정상 상태로 복원
+    Restore,
 }
 
 #[derive(Subcommand)]
@@ -114,6 +138,12 @@ async fn main() {
         },
         Commands::Fps { seconds } => fps::run(seconds),
         Commands::Diagnose { fix } => diagnose::run(fix).await,
+        Commands::Checkpoint { action } => match action {
+            CheckpointCommands::Save => checkpoint::save(),
+            CheckpointCommands::List => checkpoint::list(),
+            CheckpointCommands::Restore => checkpoint::restore_latest(),
+        },
+        Commands::Daemon { interval, auto } => daemon::run(interval, auto).await,
         Commands::Chorus { action } => match action {
             ChorusCommands::Ask { prompt, use_model, no_context } => {
                 let (model, auto) = match use_model {

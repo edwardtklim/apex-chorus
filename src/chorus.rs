@@ -242,31 +242,69 @@ async fn try_grok(prompt: &str) -> bool {
     }
 }
 
-/// Like `ask`, but returns the AI's text instead of printing it.
-/// Used by `diagnose` for the "reason" stage of the action loop.
-pub async fn query_text(prompt: &str) -> Option<String> {
-    if let Ok(api_key) = env::var("ANTHROPIC_API_KEY") {
-        let client = Client::new();
-        if let Ok(r) = client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&json!({
-                "model": "claude-sonnet-4-5",
-                "max_tokens": 1024,
-                "messages": [{ "role": "user", "content": prompt }]
-            }))
-            .send()
-            .await
-        {
-            let body: serde_json::Value = r.json().await.unwrap_or_default();
-            if let Some(text) = body["content"][0]["text"].as_str() {
-                return Some(text.to_string());
-            }
+/// Query a SPECIFIC provider, returning its text. Powers diagnose's 3-stage
+/// pipeline (Customer=Claude, Engineer=GPT, Confirmer=Gemini).
+pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
+    let client = Client::new();
+    match model {
+        "gpt" => {
+            let key = env::var("OPENAI_API_KEY").ok()?;
+            let r = client
+                .post("https://api.openai.com/v1/chat/completions")
+                .header("Authorization", format!("Bearer {}", key))
+                .header("content-type", "application/json")
+                .json(&json!({
+                    "model": "gpt-4o", "max_tokens": 1024,
+                    "messages": [{ "role": "user", "content": prompt }]
+                }))
+                .send().await.ok()?;
+            let body: serde_json::Value = r.json().await.ok()?;
+            body["choices"][0]["message"]["content"].as_str().map(|s| s.to_string())
+        }
+        "gemini" => {
+            let key = env::var("GEMINI_API_KEY").ok()?;
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
+                key
+            );
+            let r = client
+                .post(&url)
+                .header("content-type", "application/json")
+                .json(&json!({ "contents": [{ "parts": [{ "text": prompt }] }] }))
+                .send().await.ok()?;
+            let body: serde_json::Value = r.json().await.ok()?;
+            body["candidates"][0]["content"]["parts"][0]["text"].as_str().map(|s| s.to_string())
+        }
+        "grok" => {
+            let key = env::var("GROK_API_KEY").ok()?;
+            let r = client
+                .post("https://api.x.ai/v1/chat/completions")
+                .header("Authorization", format!("Bearer {}", key))
+                .header("content-type", "application/json")
+                .json(&json!({
+                    "model": "grok-3", "max_tokens": 1024,
+                    "messages": [{ "role": "user", "content": prompt }]
+                }))
+                .send().await.ok()?;
+            let body: serde_json::Value = r.json().await.ok()?;
+            body["choices"][0]["message"]["content"].as_str().map(|s| s.to_string())
+        }
+        _ => {
+            let key = env::var("ANTHROPIC_API_KEY").ok()?;
+            let r = client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", &key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&json!({
+                    "model": "claude-sonnet-4-5", "max_tokens": 1024,
+                    "messages": [{ "role": "user", "content": prompt }]
+                }))
+                .send().await.ok()?;
+            let body: serde_json::Value = r.json().await.ok()?;
+            body["content"][0]["text"].as_str().map(|s| s.to_string())
         }
     }
-    None
 }
 
 pub fn show_models() {
