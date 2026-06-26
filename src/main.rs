@@ -99,6 +99,11 @@ enum BenchCommands {
     },
     /// Everyday workload — file compression + image resize/encode
     Everyday,
+    /// CPU 지속 성능(쓰로틀링) — 싱글·멀티를 N초간 돌려 유지율 측정
+    Stability {
+        #[arg(long, default_value_t = 15)]
+        seconds: u64,
+    },
     /// Run all benchmarks in sequence
     All {
         #[arg(long, default_value_t = 10)]
@@ -149,6 +154,7 @@ async fn main() {
             BenchCommands::Cpu => bench::run_cpu(),
             BenchCommands::Gpu { seconds } => bench::run_gpu_monitor(seconds),
             BenchCommands::Everyday => bench::run_everyday(),
+            BenchCommands::Stability { seconds } => bench::run_stability(seconds),
             BenchCommands::All { gpu_seconds } => {
                 bench::run_cpu();
                 println!();

@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -43,6 +45,104 @@ fn matmul(n: usize) -> f64 {
 
 fn available_cores() -> usize {
     thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+}
+
+// ---------------- 지속 성능(stability) 벤치 — CPU 쓰로틀링 측정 ----------------
+
+fn flops_per_matmul(n: usize) -> f64 {
+    2.0 * (n as f64).powi(3)
+}
+
+/// 싱글스레드로 1초 단위 GFLOPS를 seconds 동안 측정 (성능 곡선).
+fn stability_single(seconds: u64, n: usize) -> Vec<f64> {
+    let unit = flops_per_matmul(n);
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let mut buckets = Vec::new();
+    while Instant::now() < deadline {
+        let s = Instant::now();
+        let mut flops = 0.0;
+        while s.elapsed() < Duration::from_secs(1) {
+            let _ = matmul(n);
+            flops += unit;
+        }
+        buckets.push(flops / s.elapsed().as_secs_f64() / 1e9);
+    }
+    buckets
+}
+
+/// 멀티스레드: 모든 코어가 계속 matmul, 1초 단위로 누적 처리량을 샘플링.
+fn stability_multi(seconds: u64, n: usize, cores: usize) -> Vec<f64> {
+    let unit = flops_per_matmul(n);
+    let count = Arc::new(AtomicU64::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+
+    thread::scope(|s| {
+        for _ in 0..cores {
+            let count = count.clone();
+            let stop = stop.clone();
+            s.spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = matmul(n);
+                    count.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+        }
+
+        let mut buckets = Vec::new();
+        let mut prev = 0u64;
+        for _ in 0..seconds {
+            let t = Instant::now();
+            thread::sleep(Duration::from_secs(1));
+            let now = count.load(Ordering::Relaxed);
+            let done = now - prev;
+            prev = now;
+            buckets.push(done as f64 * unit / t.elapsed().as_secs_f64() / 1e9);
+        }
+        stop.store(true, Ordering::Relaxed);
+        buckets
+    })
+}
+
+fn report(label: &str, buckets: &[f64]) {
+    if buckets.is_empty() {
+        println!("[{}] 데이터 없음", label);
+        return;
+    }
+    let peak = buckets.iter().cloned().fold(f64::MIN, f64::max);
+    let min = buckets.iter().cloned().fold(f64::MAX, f64::min);
+    let avg = buckets.iter().sum::<f64>() / buckets.len() as f64;
+    let first = buckets[0];
+    let last = *buckets.last().unwrap();
+    let ret_avg = avg / peak * 100.0;
+    let ret_min = min / peak * 100.0;
+    let verdict = if ret_min >= 90.0 {
+        "안정적 ✓ (쓰로틀링 거의 없음)"
+    } else if ret_min >= 80.0 {
+        "약간 하락 (경미한 쓰로틀링)"
+    } else {
+        "성능 하락 큼 ⚠ (쓰로틀링 의심)"
+    };
+    println!("[{}]", label);
+    println!("  초당 GFLOPS: peak {:.1} · avg {:.1} · min {:.1}", peak, avg, min);
+    println!("  처음→끝: {:.1} → {:.1} GFLOPS", first, last);
+    println!("  유지율: 평균 {:.0}% · 최저 {:.0}%", ret_avg, ret_min);
+    println!("  판정: {}", verdict);
+}
+
+pub fn run_stability(seconds: u64) {
+    let cores = available_cores();
+    println!("=== APEX Velox — bench stability (CPU 지속 성능) ===");
+    println!("각 단계 {}초 · 논리코어 {}\n", seconds, cores);
+
+    println!("싱글스레드 {}초 지속 부하 측정...", seconds);
+    let single = stability_single(seconds, MATMUL_N);
+    report("싱글스레드", &single);
+
+    println!("\n멀티스레드({}코어) {}초 지속 부하 측정...", cores, seconds);
+    let multi = stability_multi(seconds, MATMUL_N, cores);
+    report("멀티스레드", &multi);
+
+    println!("\n* 유지율 = 구간 성능 / 최고 성능. 100%에 가까울수록 발열·쓰로틀링 없이 일정.");
 }
 
 fn run_workload_single<F: Fn() -> T, T>(f: F) -> Duration {
