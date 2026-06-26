@@ -9,6 +9,7 @@ mod daemon;
 mod drivers;
 mod doctor;
 mod tempcheck;
+mod fpscheck;
 
 use dotenv::dotenv;
 use clap::{Parser, Subcommand};
@@ -54,6 +55,11 @@ enum Commands {
     Doctor,
     /// 온도를 N초 모니터링 → 최고/최저/평균·지속시간 → AI 발열 조언 (읽기 전용, 실행 X)
     Tempcheck {
+        #[arg(long, default_value_t = 10)]
+        seconds: u64,
+    },
+    /// FPS를 N초 측정 → 평균/최저/1% low → AI 게임 성능 조언 (읽기 전용, 실행 X)
+    Fpscheck {
         #[arg(long, default_value_t = 10)]
         seconds: u64,
     },
@@ -155,6 +161,7 @@ async fn main() {
         Commands::Diagnose { fix, simulate_hot } => diagnose::run(fix, simulate_hot).await,
         Commands::Doctor => doctor::run().await,
         Commands::Tempcheck { seconds } => tempcheck::run(seconds).await,
+        Commands::Fpscheck { seconds } => fpscheck::run(seconds).await,
         Commands::Drivers => drivers::run(),
         Commands::Checkpoint { action } => match action {
             CheckpointCommands::Save => checkpoint::save(),
