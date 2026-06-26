@@ -2369,6 +2369,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "dotenv",
+ "encoding_rs",
  "ferrisetw",
  "flate2",
  "image",

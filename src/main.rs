@@ -1,3 +1,4 @@
+mod util;
 mod chorus;
 mod thermals;
 mod gpu;
@@ -69,8 +70,11 @@ enum Commands {
         #[command(subcommand)]
         action: TimelineCommands,
     },
-    /// 드라이버/장치 상태 읽기 — 문제 장치(노란 느낌표) 탐지 (읽기 전용)
-    Drivers,
+    /// 드라이버/장치 상태 읽기 — 문제 장치 탐지. --analyze면 AI가 known-issue/업데이트 조언
+    Drivers {
+        #[arg(long)]
+        analyze: bool,
+    },
     /// 정상 상태 저장/복원 (블루스크린·AI 오판 후 되돌리기)
     Checkpoint {
         #[command(subcommand)]
@@ -186,7 +190,13 @@ async fn main() {
             TimelineCommands::Record => timeline::record(),
             TimelineCommands::Show => timeline::show(),
         },
-        Commands::Drivers => drivers::run(),
+        Commands::Drivers { analyze } => {
+            if analyze {
+                drivers::run_analyze().await
+            } else {
+                drivers::run()
+            }
+        }
         Commands::Checkpoint { action } => match action {
             CheckpointCommands::Save => checkpoint::save(),
             CheckpointCommands::List => checkpoint::list(),

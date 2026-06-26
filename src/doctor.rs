@@ -132,7 +132,7 @@ fn event_log() -> String {
         .output();
     match out {
         Ok(o) if o.status.success() => {
-            let s = String::from_utf8_lossy(&o.stdout);
+            let s = crate::util::decode_console(&o.stdout);
             let body = s.trim();
             if body.is_empty() {
                 "- 최근 시스템 심각/오류 이벤트: 없음\n".to_string()

@@ -14,7 +14,7 @@ const FILE: &str = "velox_checkpoints.txt";
 
 fn active_plan() -> (String, String) {
     if let Ok(out) = Command::new("powercfg").arg("/getactivescheme").output() {
-        let s = String::from_utf8_lossy(&out.stdout);
+        let s = crate::util::decode_console(&out.stdout);
         let guid = s
             .split("GUID:")
             .nth(1)

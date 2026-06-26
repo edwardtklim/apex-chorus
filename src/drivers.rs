@@ -78,6 +78,83 @@ pub fn problem_summary() -> String {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename = "Win32_PnPSignedDriver")]
+struct SignedDriver {
+    #[serde(rename = "DeviceName")]
+    device_name: Option<String>,
+    #[serde(rename = "DriverVersion")]
+    driver_version: Option<String>,
+    #[serde(rename = "DriverDate")]
+    driver_date: Option<String>,
+}
+
+/// GPU(디스플레이) 드라이버의 (이름, 버전, 날짜YYYYMMDD).
+fn display_drivers() -> Vec<(String, String, String)> {
+    let com = match COMLibrary::new() {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let wmi = match WMIConnection::new(com) {
+        Ok(w) => w,
+        Err(_) => return vec![],
+    };
+    let rows: Vec<SignedDriver> = wmi
+        .raw_query("SELECT DeviceName, DriverVersion, DriverDate FROM Win32_PnPSignedDriver WHERE DeviceClass = 'DISPLAY'")
+        .unwrap_or_default();
+    rows.into_iter()
+        .filter_map(|d| {
+            let name = d.device_name?;
+            let ver = d.driver_version.unwrap_or_else(|| "?".into());
+            let date = d
+                .driver_date
+                .map(|s| s.chars().take(8).collect::<String>())
+                .unwrap_or_else(|| "?".into());
+            Some((name, ver, date))
+        })
+        .collect()
+}
+
+/// CLI: velox drivers --analyze  (AI가 known-issue / 업데이트 조언 — 읽기 전용)
+pub async fn run_analyze() {
+    println!("=== APEX Velox — drivers analyze (읽기 전용 · 조언만) ===\n");
+    let mut summary = String::new();
+
+    match scan() {
+        Some(s) if !s.problems.is_empty() => {
+            summary.push_str(&format!("문제 장치 {}개:\n", s.problems.len()));
+            for (name, code) in &s.problems {
+                summary.push_str(&format!("- {} (code {} {})\n", name, code, code_meaning(*code)));
+            }
+        }
+        Some(s) => summary.push_str(&format!("문제 장치 없음 (총 {}개 정상)\n", s.total)),
+        None => summary.push_str("장치 조회 실패\n"),
+    }
+
+    let gpus = display_drivers();
+    if !gpus.is_empty() {
+        summary.push_str("\nGPU 드라이버:\n");
+        for (name, ver, date) in &gpus {
+            summary.push_str(&format!("- {} : v{} (날짜 {})\n", name, ver, date));
+        }
+    }
+
+    println!("{}", summary);
+    println!("[AI 드라이버 진단 — 조언만]");
+    let prompt = format!(
+        "너는 Windows 드라이버 진단 도우미다. 아래 정보를 보고 한국어로 간단히:\n\
+         1) 알려진 문제(known issue) 가능성\n\
+         2) 업데이트가 필요해 보이는 드라이버 (날짜가 오래됐는지 등)\n\
+         3) 안정성 평가\n\
+         ※ 조언만 한다. 시스템을 직접 바꾸지 않는다.\n\n[정보]\n{}",
+        summary
+    );
+    match crate::chorus::query_text_with("claude", &prompt).await {
+        Some(t) => println!("{}", t.trim()),
+        None => println!("(AI 호출 실패 — API 키 확인)"),
+    }
+}
+
 /// CLI: velox drivers
 pub fn run() {
     println!("=== APEX Velox — drivers (읽기 전용) ===\n");
