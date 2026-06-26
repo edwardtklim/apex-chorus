@@ -315,6 +315,71 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
     }
 }
 
+/// provider 별칭 → .env 환경변수 이름.
+fn env_var_for(provider: &str) -> Option<&'static str> {
+    match provider.to_lowercase().as_str() {
+        "claude" | "anthropic" => Some("ANTHROPIC_API_KEY"),
+        "gpt" | "openai" => Some("OPENAI_API_KEY"),
+        "gemini" | "google" => Some("GEMINI_API_KEY"),
+        "grok" | "xai" => Some("GROK_API_KEY"),
+        _ => None,
+    }
+}
+
+/// 사용자가 직접 API 키를 입력해 저장 (.env). `velox chorus set <provider> <key>`
+pub fn set_key(provider: &str, key: &str) {
+    let var = match env_var_for(provider) {
+        Some(v) => v,
+        None => {
+            println!("✗ 알 수 없는 provider: {} (claude / gpt / gemini / grok)", provider);
+            return;
+        }
+    };
+    let path = ".env";
+    let mut lines: Vec<String> = std::fs::read_to_string(path)
+        .map(|s| s.lines().map(|l| l.to_string()).collect())
+        .unwrap_or_default();
+
+    let prefix = format!("{}=", var);
+    let mut found = false;
+    for l in lines.iter_mut() {
+        if l.trim_start().starts_with(&prefix) {
+            *l = format!("{}={}", var, key);
+            found = true;
+        }
+    }
+    if !found {
+        lines.push(format!("{}={}", var, key));
+    }
+
+    match std::fs::write(path, lines.join("\n") + "\n") {
+        Ok(_) => {
+            println!("✓ {} ({}) 키 저장됨 → .env (다음 실행부터 적용)", provider, var);
+        }
+        Err(e) => println!("✗ .env 쓰기 실패: {}", e),
+    }
+}
+
+/// 연결된 모든 AI에 실제로 핑을 보내 응답 여부를 검증. `velox chorus test`
+pub async fn test_all() {
+    println!("=== APEX Chorus — 연결 테스트 ===\n");
+    for p in ["claude", "gpt", "gemini", "grok"] {
+        let var = env_var_for(p).unwrap();
+        if env::var(var).is_err() {
+            println!("✗ {:8} 키 없음 ({}) — `velox chorus set {} <key>`", p, var, p);
+            continue;
+        }
+        let t = std::time::Instant::now();
+        let ok = query_text_with(p, "Reply with exactly: OK").await.is_some();
+        let ms = t.elapsed().as_millis();
+        if ok {
+            println!("✓ {:8} 응답 정상 ({}ms)", p, ms);
+        } else {
+            println!("✗ {:8} 응답 실패 — 키/네트워크 확인", p);
+        }
+    }
+}
+
 pub fn show_models() {
     let models = [
         ("claude", "ANTHROPIC_API_KEY", "Code / Architecture"),

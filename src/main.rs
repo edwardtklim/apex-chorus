@@ -148,7 +148,15 @@ enum ChorusCommands {
         #[arg(long = "no-context")]
         no_context: bool,
     },
+    /// 연결된 AI 목록 + 키 상태
     Models,
+    /// API 키 직접 입력·저장 (.env): chorus set <provider> <key>
+    Set {
+        provider: String,
+        key: String,
+    },
+    /// 연결된 모든 AI에 핑을 보내 응답 검증
+    Test,
 }
 
 #[tokio::main]
@@ -219,6 +227,8 @@ async fn main() {
             ChorusCommands::Models => {
                 chorus::show_models();
             }
+            ChorusCommands::Set { provider, key } => chorus::set_key(&provider, &key),
+            ChorusCommands::Test => chorus::test_all().await,
         },
     }
 }

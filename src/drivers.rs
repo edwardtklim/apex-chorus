@@ -142,11 +142,12 @@ pub async fn run_analyze() {
     println!("{}", summary);
     println!("[AI 드라이버 진단 — 조언만]");
     let prompt = format!(
-        "너는 Windows 드라이버 진단 도우미다. 아래 정보를 보고 한국어로 간단히:\n\
-         1) 알려진 문제(known issue) 가능성\n\
-         2) 업데이트가 필요해 보이는 드라이버 (날짜가 오래됐는지 등)\n\
+        "너는 신중한 Windows 드라이버 진단 도우미다. 아래 정보를 보고 한국어로 간단히:\n\
+         1) 알려진 문제(known issue)나 보안 이슈가 의심되는 경우만 짚기\n\
+         2) 업데이트 권장은 **구체적 이유(명확한 known issue·보안·오작동)가 있을 때만**. \
+            잘 동작 중인 드라이버는 \"업데이트 불필요, 그대로 두기\"가 기본.\n\
          3) 안정성 평가\n\
-         ※ 조언만 한다. 시스템을 직접 바꾸지 않는다.\n\n[정보]\n{}",
+         ※ 보수적으로 판단할 것. 불필요한 업데이트를 권하지 말 것. 조언만 하며 시스템을 바꾸지 않는다.\n\n[정보]\n{}",
         summary
     );
     match crate::chorus::query_text_with("claude", &prompt).await {
