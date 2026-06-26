@@ -12,6 +12,7 @@
 use serde::Deserialize;
 use std::io::{self, Write};
 use std::process::Command;
+use sysinfo::System;
 use wmi::{COMLibrary, WMIConnection};
 
 const TEMP_WARN_C: f32 = 85.0;
@@ -36,9 +37,26 @@ struct ThermalZone {
 
 struct Snapshot {
     max_temp_c: Option<f32>,
+    cpu_usage: f32,
     plan_guid: String,
     plan_label: String,
     summary: String,
+}
+
+/// 현실성 검사: AI에게 데이터를 주기 전, 입력이 물리적으로 말이 되는지 코드가 먼저 본다.
+/// 버그/센서 오류로 멀쩡한 시스템을 건드리는 걸 막는 게이트. Some(이유)면 실행 보류.
+fn suspicious(snap: &Snapshot) -> Option<String> {
+    let t = snap.max_temp_c?;
+    if !(20.0..=110.0).contains(&t) {
+        return Some(format!("온도 {:.1}°C가 정상 범위(20~110°C) 밖 — 센서 오류 의심", t));
+    }
+    if t >= TEMP_WARN_C && snap.cpu_usage < 20.0 {
+        return Some(format!(
+            "고온 {:.1}°C인데 CPU 부하가 {:.0}%로 낮음 — 데이터 의심(센서/버그 가능)",
+            t, snap.cpu_usage
+        ));
+    }
+    None
 }
 
 impl Snapshot {
@@ -112,22 +130,34 @@ fn read_max_temp() -> Option<f32> {
         .fold(None, |acc, c| Some(acc.map_or(c, |m: f32| m.max(c))))
 }
 
+fn read_cpu_usage() -> f32 {
+    // 정확한 사용률은 두 번 샘플링이 필요 (sysinfo)
+    let mut sys = System::new();
+    sys.refresh_cpu();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    sys.refresh_cpu();
+    sys.global_cpu_info().cpu_usage()
+}
+
 fn collect() -> Snapshot {
     let (plan_guid, plan_label) = read_active_plan();
     let max_temp_c = read_max_temp();
+    let cpu_usage = read_cpu_usage();
     let temp_str = match max_temp_c {
         Some(c) => format!("{:.1}°C", c),
         None => "N/A (센서 읽기 실패 — 관리자 권한 필요)".to_string(),
     };
     let summary = format!(
-        "- 현재 전원 모드: {} ({})\n- 최고 온도: {}\n{}",
+        "- 현재 전원 모드: {} ({})\n- CPU 사용률: {:.0}%\n- 최고 온도: {}\n{}",
         plan_label,
         plan_guid,
+        cpu_usage,
         temp_str,
         crate::drivers::problem_summary()
     );
     Snapshot {
         max_temp_c,
+        cpu_usage,
         plan_guid,
         plan_label,
         summary,
@@ -294,9 +324,10 @@ pub async fn run(fix: bool, simulate_hot: bool) {
         let fake = 95.0_f32;
         snap.max_temp_c = Some(fake);
         snap.summary = format!(
-            "- 현재 전원 모드: {} ({})\n- 최고 온도: {:.1}°C  [⚙ SIMULATED]\n{}",
+            "- 현재 전원 모드: {} ({})\n- CPU 사용률: {:.0}%\n- 최고 온도: {:.1}°C  [⚙ SIMULATED]\n{}",
             snap.plan_label,
             snap.plan_guid,
+            snap.cpu_usage,
             fake,
             crate::drivers::problem_summary()
         );
@@ -346,6 +377,13 @@ pub async fn run(fix: bool, simulate_hot: bool) {
 
     if !fix {
         println!("\n실제 적용: velox diagnose --fix");
+        return;
+    }
+
+    // 현실성 검사: 의심스러운 데이터면 실행하지 않는다.
+    if let Some(reason) = suspicious(&snap) {
+        println!("\n[안전·현실성 검사] {}", reason);
+        println!("→ 실행 보류: 데이터가 의심스러울 땐 시스템을 바꾸지 않습니다.");
         return;
     }
 
@@ -402,6 +440,8 @@ pub async fn daemon_tick(auto: bool, allow_ai: bool) -> bool {
         } => {
             if !confirmed {
                 println!("  → Confirmer 반려 🛑 실행 안 함");
+            } else if let Some(reason) = suspicious(&snap) {
+                println!("  → [안전] {} → 실행 보류", reason);
             } else if auto {
                 println!("  → AUTO: {} 적용", label);
                 execute_with_safety(label, guid, &rollback_guid);
