@@ -137,18 +137,24 @@ fn collect() -> Snapshot {
 // ---------------- 화이트리스트 검증 ----------------
 
 fn validate(p: &AiProposal, snap: &Snapshot) -> Action {
-    match p.action.as_str() {
-        "set_power_plan" => {
-            let key = p.target.as_deref().unwrap_or("");
-            match plan_by_key(key) {
-                Some((label, guid)) if guid.to_lowercase() != snap.plan_guid.to_lowercase() => {
-                    Action::SetPowerPlan {
-                        label,
-                        guid,
-                        rollback_guid: snap.plan_guid.clone(),
-                    }
-                }
-                _ => Action::None,
+    if !p.action.contains("set_power_plan") {
+        return Action::None;
+    }
+    // target: 명시 필드 우선, 없으면 action 문자열에서 추출 (예: "set_power_plan|balanced")
+    let key = p
+        .target
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| p.action.split('|').nth(1).map(|s| s.trim().to_string()))
+        .unwrap_or_default();
+    match plan_by_key(&key) {
+        Some((label, guid)) if guid.to_lowercase() != snap.plan_guid.to_lowercase() => {
+            Action::SetPowerPlan {
+                label,
+                guid,
+                rollback_guid: snap.plan_guid.clone(),
             }
         }
         _ => Action::None,
@@ -178,9 +184,13 @@ async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
     // 2) Engineer (GPT) — 구조화된 조치 제안
     let eng_prompt = format!(
         "너는 시스템 엔지니어 AI다.\n사용자 의도: {}\n시스템 상태:\n{}\n\n\
-         아래 JSON 한 개로만 답하라(설명/마크다운 금지).\n\
-         {{\"action\":\"set_power_plan|none\",\"target\":\"balanced|high_performance|power_saver|null\",\"reason\":\"한 줄\"}}\n\
-         규칙: 안전·가역한 경우에만 조치 제안, 애매하면 action=\"none\".",
+         아래 형식의 JSON 한 개로만 답하라(설명/마크다운/코드펜스 금지).\n\
+         필드 정의:\n\
+         - action: \"set_power_plan\" 또는 \"none\" 중 정확히 하나의 문자열\n\
+         - target: action이 set_power_plan이면 \"balanced\" 또는 \"high_performance\" 또는 \"power_saver\" 중 하나, 아니면 null\n\
+         - reason: 한 줄 이유\n\
+         정확한 예시: {{\"action\":\"set_power_plan\",\"target\":\"balanced\",\"reason\":\"발열이 높아 균형 모드로 낮춤\"}}\n\
+         규칙: 안전하고 되돌릴 수 있는 경우에만 set_power_plan, 애매하면 action을 \"none\"으로.",
         intent.trim(),
         snap.summary
     );
@@ -277,9 +287,24 @@ fn log_action(label: &str, guid: &str, rollback: &str, verified: bool) {
 
 // ---------------- CLI: velox diagnose [--fix] ----------------
 
-pub async fn run(fix: bool) {
+pub async fn run(fix: bool, simulate_hot: bool) {
     println!("=== APEX Velox — diagnose (3단계 AI) ===\n");
-    let snap = collect();
+    let mut snap = collect();
+    if simulate_hot {
+        let fake = 95.0_f32;
+        snap.max_temp_c = Some(fake);
+        snap.summary = format!(
+            "- 현재 전원 모드: {} ({})\n- 최고 온도: {:.1}°C  [⚙ SIMULATED]\n{}",
+            snap.plan_label,
+            snap.plan_guid,
+            fake,
+            crate::drivers::problem_summary()
+        );
+        println!(
+            "⚙ 시뮬레이션: 온도 {:.1}°C 주입 (실제 센서 아님). AI·체크포인트·실행·롤백은 전부 진짜(가역).\n",
+            fake
+        );
+    }
     println!("[1] 시스템 상태\n{}\n", snap.summary);
 
     println!("[2] 3단계 AI 파이프라인...");

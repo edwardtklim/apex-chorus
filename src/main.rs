@@ -45,6 +45,9 @@ enum Commands {
     Diagnose {
         #[arg(long)]
         fix: bool,
+        /// 발열/관리자 없이 임계 초과(95°C)를 주입해 전체 루프를 실증
+        #[arg(long = "simulate-hot")]
+        simulate_hot: bool,
     },
     /// APEX Doctor — "왜 느려?" 한 명령으로 전체 스캔 + AI 종합 진단 (읽기 전용)
     Doctor,
@@ -143,7 +146,7 @@ async fn main() {
             }
         },
         Commands::Fps { seconds } => fps::run(seconds),
-        Commands::Diagnose { fix } => diagnose::run(fix).await,
+        Commands::Diagnose { fix, simulate_hot } => diagnose::run(fix, simulate_hot).await,
         Commands::Doctor => doctor::run().await,
         Commands::Drivers => drivers::run(),
         Commands::Checkpoint { action } => match action {

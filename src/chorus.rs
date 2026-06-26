@@ -273,7 +273,15 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
                 .json(&json!({ "contents": [{ "parts": [{ "text": prompt }] }] }))
                 .send().await.ok()?;
             let body: serde_json::Value = r.json().await.ok()?;
-            body["candidates"][0]["content"]["parts"][0]["text"].as_str().map(|s| s.to_string())
+            // Gemini 2.5 Pro는 thinking 모델 — parts에 thought 조각이 섞일 수 있으니
+            // 모든 part의 text를 모아 답을 추출한다 (parts[0]만 보면 None 날 수 있음).
+            let parts = body["candidates"][0]["content"]["parts"].as_array()?;
+            let text: String = parts
+                .iter()
+                .filter_map(|p| p["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("");
+            (!text.is_empty()).then_some(text)
         }
         "grok" => {
             let key = env::var("GROK_API_KEY").ok()?;
