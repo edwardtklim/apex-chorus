@@ -10,6 +10,7 @@ mod drivers;
 mod doctor;
 mod tempcheck;
 mod fpscheck;
+mod timeline;
 
 use dotenv::dotenv;
 use clap::{Parser, Subcommand};
@@ -63,6 +64,11 @@ enum Commands {
         #[arg(long, default_value_t = 10)]
         seconds: u64,
     },
+    /// 성능 추세 기록·비교 — 개인 최고(100%) 대비 "언제부터 느려졌나" 추적
+    Timeline {
+        #[command(subcommand)]
+        action: TimelineCommands,
+    },
     /// 드라이버/장치 상태 읽기 — 문제 장치(노란 느낌표) 탐지 (읽기 전용)
     Drivers,
     /// 정상 상태 저장/복원 (블루스크린·AI 오판 후 되돌리기)
@@ -109,6 +115,14 @@ enum BenchCommands {
         #[arg(long, default_value_t = 10)]
         gpu_seconds: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum TimelineCommands {
+    /// 지금 성능을 측정해 기록
+    Record,
+    /// 기록된 추세 + 개인 최고 대비 % 보기
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -168,6 +182,10 @@ async fn main() {
         Commands::Doctor => doctor::run().await,
         Commands::Tempcheck { seconds } => tempcheck::run(seconds).await,
         Commands::Fpscheck { seconds } => fpscheck::run(seconds).await,
+        Commands::Timeline { action } => match action {
+            TimelineCommands::Record => timeline::record(),
+            TimelineCommands::Show => timeline::show(),
+        },
         Commands::Drivers => drivers::run(),
         Commands::Checkpoint { action } => match action {
             CheckpointCommands::Save => checkpoint::save(),

@@ -21,7 +21,9 @@ target
 velox_actions.log
 velox_checkpoints.txt
 velox_daemon.log
+velox_timeline.csv
 daemon_out.txt
+d_out.txt
 
 # RustRover / JetBrains
 #.idea/

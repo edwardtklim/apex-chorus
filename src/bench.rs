@@ -47,6 +47,34 @@ fn available_cores() -> usize {
     thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
 }
 
+/// 타임라인 기록용 빠른 점수 (single GFLOPS, multi GFLOPS). 고정 작업량 = 비교 가능.
+pub fn quick_score() -> (f64, f64) {
+    let cores = available_cores();
+    let n = MATMUL_N;
+    let flops = 2.0 * (n as f64).powi(3);
+    let runs: usize = 20;
+
+    let t = Instant::now();
+    for _ in 0..runs {
+        let _ = matmul(n);
+    }
+    let single = flops * runs as f64 / t.elapsed().as_secs_f64() / 1e9;
+
+    let t = Instant::now();
+    thread::scope(|s| {
+        for _ in 0..cores {
+            s.spawn(|| {
+                for _ in 0..runs {
+                    let _ = matmul(n);
+                }
+            });
+        }
+    });
+    let multi = flops * (runs * cores) as f64 / t.elapsed().as_secs_f64() / 1e9;
+
+    (single, multi)
+}
+
 // ---------------- 지속 성능(stability) 벤치 — CPU 쓰로틀링 측정 ----------------
 
 fn flops_per_matmul(n: usize) -> f64 {
