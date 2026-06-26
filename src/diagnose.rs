@@ -336,6 +336,14 @@ pub async fn run(fix: bool, simulate_hot: bool) {
         }
     }
 
+    // 안전: 시뮬레이션은 절대 실제 상태를 바꾸지 않는다 (테스트 ≠ 실제).
+    // 버그나 잘못된 시뮬레이션이 멀쩡한 시스템을 건드리는 걸 원천 차단.
+    if simulate_hot {
+        println!("\n[시뮬레이션] 실제 실행 안 함 — 테스트는 상태를 바꾸지 않습니다.");
+        println!("(진짜 실행은 실제 데이터로: velox diagnose --fix)");
+        return;
+    }
+
     if !fix {
         println!("\n실제 적용: velox diagnose --fix");
         return;

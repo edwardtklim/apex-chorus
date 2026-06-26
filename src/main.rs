@@ -8,6 +8,7 @@ mod checkpoint;
 mod daemon;
 mod drivers;
 mod doctor;
+mod tempcheck;
 
 use dotenv::dotenv;
 use clap::{Parser, Subcommand};
@@ -51,6 +52,11 @@ enum Commands {
     },
     /// APEX Doctor — "왜 느려?" 한 명령으로 전체 스캔 + AI 종합 진단 (읽기 전용)
     Doctor,
+    /// 온도를 N초 모니터링 → 최고/최저/평균·지속시간 → AI 발열 조언 (읽기 전용, 실행 X)
+    Tempcheck {
+        #[arg(long, default_value_t = 10)]
+        seconds: u64,
+    },
     /// 드라이버/장치 상태 읽기 — 문제 장치(노란 느낌표) 탐지 (읽기 전용)
     Drivers,
     /// 정상 상태 저장/복원 (블루스크린·AI 오판 후 되돌리기)
@@ -148,6 +154,7 @@ async fn main() {
         Commands::Fps { seconds } => fps::run(seconds),
         Commands::Diagnose { fix, simulate_hot } => diagnose::run(fix, simulate_hot).await,
         Commands::Doctor => doctor::run().await,
+        Commands::Tempcheck { seconds } => tempcheck::run(seconds).await,
         Commands::Drivers => drivers::run(),
         Commands::Checkpoint { action } => match action {
             CheckpointCommands::Save => checkpoint::save(),
