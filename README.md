@@ -24,16 +24,17 @@ APEX
 | `velox info` | CPU / GPU / battery / temperature overview |
 | `velox thermals [--watch]` | Real-time temperature polling |
 | `velox gpu status` | GPU usage / VRAM / temp (via `nvidia-smi`, WMI fallback) |
-| `velox bench cpu\|gpu\|everyday\|all` | Single + multi-thread CPU benchmark, everyday workload, GPU monitor |
+| `velox bench cpu\|stability\|everyday\|gpu\|all` | CPU score, **sustained/throttle test** (retention %), everyday workload, GPU monitor |
+| `velox timeline record\|show` | Track performance over time vs your **personal best** (100%) |
 | `velox fps [--seconds N]` | Per-process frame detection via ETW (DXGI) |
 | `velox tempcheck [--seconds N]` | Monitor temp (max/min/avg, time ≥85°C) → AI thermal advice (read-only) |
 | `velox fpscheck [--seconds N]` | Measure FPS (avg / 1% low) → AI game-performance advice (read-only) |
-| `velox drivers` | Read-only scan for problem devices (yellow-bang) |
+| `velox drivers [--analyze]` | Scan problem devices; `--analyze` adds AI driver-health advice |
 | `velox doctor` | **One command** — scans everything, AI gives a full diagnosis |
 | `velox diagnose [--fix] [--simulate-hot]` | AI proposes a safe, reversible action; applies it on approval |
 | `velox checkpoint save\|list\|restore` | Snapshot a known-good state; roll back later |
 | `velox daemon [--interval N] [--auto]` | Background monitor; fires the AI loop on a *sustained* anomaly |
-| `velox chorus ask "..." [--use M]` | Ask Claude / GPT / Gemini / Grok (auto-routed) |
+| `velox chorus ask\|models\|set\|test` | Multi-AI: ask (auto-routed) · manage providers · set your own keys · verify connections |
 
 ---
 
@@ -104,7 +105,7 @@ Claude / GPT / Gemini / Grok APIs · `clap` · `tokio` · `reqwest`
 
 ---
 
-## Status (v0.6.0)
+## Status (v0.7.0)
 
 **Verified end-to-end:** the full AI action loop is proven via `diagnose --simulate-hot` —
 Customer (Claude) → Engineer (GPT) → Confirmer (Gemini APPROVE) → auto-checkpoint →
@@ -112,14 +113,28 @@ execute (power plan) → verify → `checkpoint restore`. The complete safety st
 (whitelist · 3-stage AI · reality check · persistence · dry-run · checkpoint · approval ·
 cooldown) is in place.
 
+**Performance suite:** `bench` (incl. sustained/throttle `stability`) + `timeline`
+(track regressions vs your personal best). **Advisory tools** (read-only, AI advice):
+`doctor`, `tempcheck`, `fpscheck`, `drivers --analyze`. **AI management:** `chorus
+set` / `test` to add your own keys and verify every provider.
+
 **Needs Administrator:** temperature sensors and ETW frame detection (`tempcheck`,
 `fpscheck`, `fps`, real `diagnose --fix` on heat).
 
-**Known cosmetic issue:** `powercfg` / `wevtutil` output is in the system codepage, so some
-Korean strings can mojibake when read as UTF-8 (functionality unaffected).
-
 **Out of scope (by design):** automated BIOS changes — non-reversible / can brick
 hardware. Read-only at most.
+
+---
+
+## Roadmap
+
+- **v0.8 — Chorus provider architecture:** add arbitrary providers (OpenRouter, **local
+  Ollama**, custom endpoints), semantic (meaning-based) routing, multi-AI consensus.
+- **v0.9 — Smarter automation:** offline/online auto-switch, startup & background
+  optimizer (a new *action* behind the whitelist + safety stack), more safe actions.
+- **v1.0 — Stable release:** config file, installer, docs, polished UX. First public CLI.
+- **Beyond (APEX Core / Pulse):** Core as a long-running service + plugin system; Pulse
+  GUI (Tauri + React) on top of the Velox engine.
 
 ---
 
