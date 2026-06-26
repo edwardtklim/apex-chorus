@@ -63,13 +63,6 @@ impl Snapshot {
     fn is_hot(&self) -> bool {
         self.max_temp_c.map_or(false, |t| t >= TEMP_WARN_C)
     }
-    fn heartbeat(&self) -> String {
-        let temp = self
-            .max_temp_c
-            .map(|c| format!("{:.1}°C", c))
-            .unwrap_or_else(|| "N/A".to_string());
-        format!("전원={} 온도={}", self.plan_label, temp)
-    }
 }
 
 enum Action {
@@ -406,23 +399,23 @@ pub async fn run(fix: bool, simulate_hot: bool) {
     }
 }
 
-// ---------------- daemon이 호출하는 1회 점검 ----------------
+// ---------------- daemon이 쓰는 함수 ----------------
 
-/// 데몬의 한 틱. auto=true 면 Confirmer 승인 시 체크포인트 후 자동 실행(사람 승인 생략).
-/// 반환: AI 파이프라인을 가동했으면 true (데몬이 쿨다운 설정에 사용).
-pub async fn daemon_tick(auto: bool, allow_ai: bool) -> bool {
+/// 가벼운 상태 읽기 (heartbeat 문자열, 과열 여부). 매 틱 호출되므로 무거운 작업 제외.
+pub fn quick_status() -> (String, bool) {
+    let (_, plan_label) = read_active_plan();
+    let temp = read_max_temp();
+    let hot = temp.map_or(false, |t| t >= TEMP_WARN_C);
+    let temp_s = temp
+        .map(|c| format!("{:.1}°C", c))
+        .unwrap_or_else(|| "N/A".to_string());
+    (format!("전원={} 온도={}", plan_label, temp_s), hot)
+}
+
+/// 무거운 반응 단계: 전체 스냅샷 → 3단계 AI → 현실성 검사 → (auto면) 실행.
+/// 데몬이 "지속성 + 쿨다운"을 통과시켜 호출할 때만 실행된다.
+pub async fn react(auto: bool) {
     let snap = collect();
-    println!("· {}", snap.heartbeat());
-
-    if !snap.is_hot() {
-        return false; // 정상 → 감시만
-    }
-    if !allow_ai {
-        println!("  ⚠ 임계 초과 — 쿨다운 중이라 AI 생략");
-        return false;
-    }
-    println!("  ⚠ 임계 초과 → 3단계 AI 파이프라인 가동");
-
     let (action, confirmed) = match ai_pipeline(&snap).await {
         Some(p) => {
             println!("{}", p.transcript);
@@ -446,9 +439,8 @@ pub async fn daemon_tick(auto: bool, allow_ai: bool) -> bool {
                 println!("  → AUTO: {} 적용", label);
                 execute_with_safety(label, guid, &rollback_guid);
             } else {
-                println!("  → 제안: 전원 모드 → {} (실행하려면 --auto 또는 `velox diagnose --fix`)", label);
+                println!("  → 제안: 전원 모드 → {} (--auto로 자동 실행)", label);
             }
         }
     }
-    true
 }

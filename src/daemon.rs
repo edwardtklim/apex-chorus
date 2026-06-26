@@ -15,6 +15,7 @@ use std::io::Write;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const COOLDOWN_SECS: u64 = 300; // 5분: 한 번 조치 후 재가동 억제
+const CONSECUTIVE_HOT_REQUIRED: u32 = 3; // 지속성: 연속 N회 과열이어야 발동 (글리치 무시)
 const LOG_FILE: &str = "velox_daemon.log";
 
 fn log_event(msg: &str) {
@@ -30,8 +31,9 @@ fn log_event(msg: &str) {
 pub async fn run(interval_secs: u64, auto: bool) {
     println!("=== APEX Velox — daemon ===");
     println!(
-        "간격: {}s · 쿨다운: {}s · 모드: {} · 중지: Ctrl+C\n",
+        "간격: {}s · 지속성: {}회 · 쿨다운: {}s · 모드: {} · 중지: Ctrl+C\n",
         interval_secs,
+        CONSECUTIVE_HOT_REQUIRED,
         COOLDOWN_SECS,
         if auto {
             "AUTO (승인된 조치 자동 실행)"
@@ -46,19 +48,38 @@ pub async fn run(interval_secs: u64, auto: bool) {
 
     let cooldown = Duration::from_secs(COOLDOWN_SECS);
     let mut last_fire: Option<Instant> = None;
+    let mut hot_streak: u32 = 0;
     let mut tick: u64 = 0;
 
     loop {
         tick += 1;
-        print!("[tick {}] ", tick);
 
-        // 쿨다운 만료 여부 → AI 가동 허용?
-        let allow_ai = last_fire.map_or(true, |t| t.elapsed() >= cooldown);
-        let fired = crate::diagnose::daemon_tick(auto, allow_ai).await;
-        if fired {
-            last_fire = Some(Instant::now());
-            log_event("anomaly: AI pipeline fired");
+        // 1) 매 틱 가벼운 상태 읽기 (저비용)
+        let (heartbeat, hot) = crate::diagnose::quick_status();
+        if hot {
+            hot_streak += 1;
+        } else {
+            hot_streak = 0;
         }
+
+        print!("[tick {}] {}", tick, heartbeat);
+        if hot {
+            print!("  ⚠ 이상 {}/{}", hot_streak, CONSECUTIVE_HOT_REQUIRED);
+        }
+        println!();
+
+        // 2) 지속성 + 쿨다운 둘 다 통과해야 무거운 AI 반응 가동
+        let cooldown_ok = last_fire.map_or(true, |t| t.elapsed() >= cooldown);
+        if hot && hot_streak >= CONSECUTIVE_HOT_REQUIRED && cooldown_ok {
+            println!("  → 지속 확인됨(글리치 아님) → 3단계 AI 파이프라인 가동");
+            log_event("anomaly persisted -> react");
+            crate::diagnose::react(auto).await;
+            last_fire = Some(Instant::now());
+            hot_streak = 0;
+        } else if hot && !cooldown_ok {
+            println!("  → 쿨다운 중 — 대기");
+        }
+        // hot이지만 아직 지속 횟수 미달 → 계속 카운트만 (글리치 한 번엔 반응 안 함)
 
         // 인터벌 대기 중 Ctrl+C 들어오면 즉시 우아하게 종료
         tokio::select! {
