@@ -494,7 +494,7 @@ fn parse_score(s: &str) -> Option<f64> {
         .next()?
         .parse::<f64>()
         .ok()
-        .map(|v| v.clamp(0.0, 10.0))
+        .map(|v| v.clamp(0.0, 1000.0))
 }
 
 /// 벤치 문제 세트. hard=true면 변별력 있는 어려운(오염 적은 새) 문제.
@@ -519,11 +519,22 @@ fn prompt_set(hard: bool) -> Vec<(&'static str, &'static str)> {
 /// AI 모델 벤치 (LLM-as-judge). 연결된 모든 모델에 같은 질문 → judge가 채점 → 리더보드.
 /// 측정: 점수(카테고리별), 속도(지연), 처리량(chars/s), 크기(응답 길이).
 /// `velox chorus bench [--judge <model>] [--hard]`
-pub async fn bench(judge: &str, hard: bool) {
-    println!("=== APEX Chorus — AI 모델 벤치 (LLM-judge{}) ===", if hard { ", HARD" } else { "" });
-    println!("심판: {} · 동일 질문을 각 모델에 → judge가 0~10 채점\n", judge);
+pub async fn bench(hard: bool) {
+    println!("=== APEX Chorus — AI 모델 벤치 (다중 심판, 0~1000{}) ===", if hard { ", HARD" } else { "" });
 
     let prompts = prompt_set(hard);
+
+    // 심판 패널 = 키 있는 내장 모델. 자기 답은 자기가 채점 안 함 → self-bias 제거.
+    let panel: Vec<String> = ["claude", "gpt", "gemini", "grok"]
+        .iter()
+        .filter(|m| env_var_for(m).map(|v| env::var(v).is_ok()).unwrap_or(false))
+        .map(|s| s.to_string())
+        .collect();
+    if panel.is_empty() {
+        println!("심판으로 쓸 모델 없음 (키 필요).");
+        return;
+    }
+    println!("심판 패널: {} · 각 답을 자기 외 심판들이 0~1000 채점 → 평균\n", panel.join(", "));
 
     // 대상 = 키 있는 내장 + 커스텀
     let mut models: Vec<String> = Vec::new();
@@ -566,15 +577,21 @@ pub async fn bench(judge: &str, hard: bool) {
             };
             len += answer.chars().count();
             let jp = format!(
-                "You are an impartial evaluator. Rate the answer's correctness and quality from 0 to 10. \
-                 Reply with ONLY a number.\n\nQuestion: {}\nAnswer: {}",
+                "You are an impartial expert evaluator. Rate the answer's correctness and quality on a \
+                 precise 0 to 1000 scale (use the full range for fine discrimination). Reply with ONLY the integer.\n\n\
+                 Question: {}\nAnswer: {}",
                 q, answer
             );
-            let score = query_text_with(judge, &jp)
-                .await
-                .and_then(|s| parse_score(&s))
-                .unwrap_or(0.0);
-            println!("  {} → {:.1}/10", cat, score);
+            let mut sum = 0.0;
+            let mut cnt = 0u32;
+            for j in panel.iter().filter(|j| j.as_str() != model.as_str()) {
+                if let Some(sc) = query_text_with(j, &jp).await.and_then(|s| parse_score(&s)) {
+                    sum += sc;
+                    cnt += 1;
+                }
+            }
+            let score = if cnt > 0 { sum / cnt as f64 } else { 0.0 };
+            println!("  {} → {:.0}/1000 (심판 {}명)", cat, score, cnt);
             cat_scores.push(score);
         }
         rows.push(Row { model: model.clone(), cat_scores, lat_ms: lat, len });
@@ -584,9 +601,9 @@ pub async fn bench(judge: &str, hard: bool) {
     let avg_score = |r: &Row| r.cat_scores.iter().sum::<f64>() / np as f64;
     rows.sort_by(|a, b| avg_score(b).partial_cmp(&avg_score(a)).unwrap());
 
-    println!("\n=== 리더보드 (judge: {}) ===", judge);
-    println!("{:<12}{:>8}{:>9}{:>11}{:>9}", "모델", "점수/10", "속도ms", "처리량c/s", "크기");
-    println!("{}", "-".repeat(49));
+    println!("\n=== 리더보드 (다중 심판 평균) ===");
+    println!("{:<12}{:>10}{:>9}{:>11}{:>9}", "모델", "점수/1000", "속도ms", "처리량c/s", "크기");
+    println!("{}", "-".repeat(53));
     for r in &rows {
         let sc = avg_score(r);
         let lat = r.lat_ms / np as u128;
@@ -596,23 +613,23 @@ pub async fn bench(judge: &str, hard: bool) {
         } else {
             0.0
         };
-        println!("{:<12}{:>8.1}{:>7}ms{:>11.0}{:>9}", r.model, sc, lat, thru, size);
+        println!("{:<12}{:>10.0}{:>7}ms{:>11.0}{:>9}", r.model, sc, lat, thru, size);
     }
 
-    println!("\n=== 카테고리별 점수 ===");
+    println!("\n=== 카테고리별 점수 (/1000) ===");
     print!("{:<12}", "모델");
     for (cat, _) in &prompts {
-        print!("{:>7}", cat);
+        print!("{:>8}", cat);
     }
     println!();
     for r in &rows {
         print!("{:<12}", r.model);
         for s in &r.cat_scores {
-            print!("{:>7.1}", s);
+            print!("{:>8.0}", s);
         }
         println!();
     }
-    println!("\n※ LLM-judge는 심판 편향 있음(상대 참고용). 쉬운 문제는 다 만점이라 변별 안 됨 → --hard 권장.");
+    println!("\n※ 자기 답은 자기가 채점 안 함 → self-bias 완화. 패널 공통 편향은 남음(상대 참고용).");
 }
 
 pub fn show_models() {
