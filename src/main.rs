@@ -155,6 +155,14 @@ enum ChorusCommands {
         provider: String,
         key: String,
     },
+    /// 커스텀 AI provider 추가 (OpenAI 호환): chorus add <name> <base_url> <model> [key]
+    Add {
+        name: String,
+        base_url: String,
+        model: String,
+        #[arg(default_value = "none")]
+        key: String,
+    },
     /// 연결된 모든 AI에 핑을 보내 응답 검증
     Test,
 }
@@ -228,6 +236,9 @@ async fn main() {
                 chorus::show_models();
             }
             ChorusCommands::Set { provider, key } => chorus::set_key(&provider, &key),
+            ChorusCommands::Add { name, base_url, model, key } => {
+                chorus::add_provider(&name, &base_url, &model, &key)
+            }
             ChorusCommands::Test => chorus::test_all().await,
         },
     }

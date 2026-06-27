@@ -22,6 +22,7 @@ velox_actions.log
 velox_checkpoints.txt
 velox_daemon.log
 velox_timeline.csv
+velox_providers.json
 daemon_out.txt
 d_out.txt
 

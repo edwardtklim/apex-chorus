@@ -1,4 +1,5 @@
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::env;
 use sysinfo::System;
@@ -82,6 +83,16 @@ pub async fn ask(prompt: &str, model: &str, no_context: bool) {
         let context = get_system_context();
         format!("{}\nUser question: {}", context, prompt)
     };
+
+    // 커스텀 provider면 query_text_with 로 직접 처리 (fallback은 내장 전용)
+    if load_providers().iter().any(|p| p.name == model) {
+        println!("Asking {} (custom)...\n", model);
+        match query_text_with(model, &full_prompt).await {
+            Some(t) => println!("{}", t),
+            None => println!("✗ {} 응답 실패 — URL/모델/키 확인", model),
+        }
+        return;
+    }
 
     let fallback_order: Vec<&str> = match model {
         "gpt"    => vec!["gpt",    "claude", "grok", "gemini"],
@@ -297,7 +308,7 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
             let body: serde_json::Value = r.json().await.ok()?;
             body["choices"][0]["message"]["content"].as_str().map(|s| s.to_string())
         }
-        _ => {
+        "claude" | "anthropic" => {
             let key = env::var("ANTHROPIC_API_KEY").ok()?;
             let r = client
                 .post("https://api.anthropic.com/v1/messages")
@@ -312,6 +323,88 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
             let body: serde_json::Value = r.json().await.ok()?;
             body["content"][0]["text"].as_str().map(|s| s.to_string())
         }
+        other => {
+            // 커스텀 provider (OpenAI 호환): velox_providers.json 에서 조회
+            let p = load_providers().into_iter().find(|x| x.name == other)?;
+            query_openai_compatible(&client, &p.base_url, &p.model, &p.api_key, prompt).await
+        }
+    }
+}
+
+// ---------------- 커스텀 provider (OpenAI 호환) ----------------
+
+const PROVIDERS_FILE: &str = "velox_providers.json";
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ProviderConfig {
+    name: String,
+    base_url: String,
+    model: String,
+    #[serde(default)]
+    api_key: String,
+}
+
+fn load_providers() -> Vec<ProviderConfig> {
+    std::fs::read_to_string(PROVIDERS_FILE)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_providers(ps: &[ProviderConfig]) -> bool {
+    serde_json::to_string_pretty(ps)
+        .ok()
+        .and_then(|s| std::fs::write(PROVIDERS_FILE, s).ok())
+        .is_some()
+}
+
+/// OpenAI 호환 엔드포인트 호출 — OpenRouter / Ollama(localhost:11434/v1) / 커스텀 등 대부분 호환.
+async fn query_openai_compatible(
+    client: &Client,
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+    prompt: &str,
+) -> Option<String> {
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let mut req = client
+        .post(&url)
+        .header("content-type", "application/json")
+        .json(&json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": prompt }]
+        }));
+    if !api_key.is_empty() && api_key.to_lowercase() != "none" {
+        req = req.header("Authorization", format!("Bearer {}", api_key));
+    }
+    let r = req.send().await.ok()?;
+    let body: serde_json::Value = r.json().await.ok()?;
+    body["choices"][0]["message"]["content"]
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+/// 커스텀 provider 추가. `velox chorus add <name> <base_url> <model> [key]`
+pub fn add_provider(name: &str, base_url: &str, model: &str, key: &str) {
+    let builtin = ["claude", "gpt", "gemini", "grok", "anthropic", "openai", "google", "xai"];
+    if builtin.contains(&name.to_lowercase().as_str()) {
+        println!("✗ '{}'는 내장 provider 이름이라 못 써요. 다른 이름으로.", name);
+        return;
+    }
+    let mut ps = load_providers();
+    ps.retain(|x| x.name != name);
+    ps.push(ProviderConfig {
+        name: name.to_string(),
+        base_url: base_url.to_string(),
+        model: model.to_string(),
+        api_key: key.to_string(),
+    });
+    if save_providers(&ps) {
+        println!("✓ 커스텀 provider 추가됨: {} ({} / {})", name, base_url, model);
+        println!("  사용: velox chorus ask \"...\" --use {}", name);
+        println!("  (저장: {})", PROVIDERS_FILE);
+    } else {
+        println!("✗ 저장 실패");
     }
 }
 
@@ -378,6 +471,16 @@ pub async fn test_all() {
             println!("✗ {:8} 응답 실패 — 키/네트워크 확인", p);
         }
     }
+    for p in load_providers() {
+        let t = std::time::Instant::now();
+        let ok = query_text_with(&p.name, "Reply with exactly: OK").await.is_some();
+        let ms = t.elapsed().as_millis();
+        if ok {
+            println!("✓ {:8} (커스텀) 응답 정상 ({}ms)", p.name, ms);
+        } else {
+            println!("✗ {:8} (커스텀) 응답 실패 — URL/모델/키 확인", p.name);
+        }
+    }
 }
 
 pub fn show_models() {
@@ -389,9 +492,17 @@ pub fn show_models() {
     ];
 
     println!("=== APEX Chorus — Connected Models ===\n");
+    println!("[내장]");
     for (name, key, role) in &models {
         let status = if env::var(key).is_ok() { "✓" } else { "✗" };
         println!("{} {:8} — {}", status, name, role);
+    }
+    let custom = load_providers();
+    if !custom.is_empty() {
+        println!("\n[커스텀 — chorus add 로 추가됨]");
+        for p in &custom {
+            println!("✓ {:8} — {} ({})", p.name, p.model, p.base_url);
+        }
     }
     println!();
 }
