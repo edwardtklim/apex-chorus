@@ -8,6 +8,7 @@ mod diagnose;
 mod checkpoint;
 mod daemon;
 mod watch;
+mod dashboard;
 mod drivers;
 mod doctor;
 mod tempcheck;
@@ -81,6 +82,8 @@ enum Commands {
         #[command(subcommand)]
         action: CheckpointCommands,
     },
+    /// 실시간 터미널 대시보드 — CPU/RAM/GPU/온도/디스크/네트워크를 한 화면에 (1초 갱신)
+    Dashboard,
     /// 상시 감시 데몬 — 일정 간격으로 점검, 임계치 시 AI 파이프라인 가동
     Daemon {
         #[arg(long, default_value_t = 30)]
@@ -228,6 +231,7 @@ async fn main() {
             CheckpointCommands::List => checkpoint::list(),
             CheckpointCommands::Restore => checkpoint::restore_latest(),
         },
+        Commands::Dashboard => dashboard::run().await,
         Commands::Daemon { interval, auto } => daemon::run(interval, auto).await,
         Commands::Chorus { action } => match action {
             ChorusCommands::Ask { prompt, use_model, no_context } => {
