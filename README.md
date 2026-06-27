@@ -34,7 +34,7 @@ APEX
 | `velox diagnose [--fix] [--simulate-hot]` | AI proposes a safe, reversible action; applies it on approval |
 | `velox checkpoint save\|list\|restore` | Snapshot a known-good state; roll back later |
 | `velox daemon [--interval N] [--auto]` | Background monitor; fires the AI loop on a *sustained* anomaly |
-| `velox chorus ask\|models\|set\|test` | Multi-AI: ask (auto-routed) · manage providers · set your own keys · verify connections |
+| `velox chorus ask\|models\|set\|add\|test\|bench\|consensus` | Multi-AI: **semantic** auto-routing · add custom providers (OpenRouter/Ollama) · set keys · verify · model **benchmark** (multi-judge) · **consensus** |
 
 ---
 
@@ -105,7 +105,7 @@ Claude / GPT / Gemini / Grok APIs · `clap` · `tokio` · `reqwest`
 
 ---
 
-## Status (v0.7.0)
+## Status (v0.8.0)
 
 **Verified end-to-end:** the full AI action loop is proven via `diagnose --simulate-hot` —
 Customer (Claude) → Engineer (GPT) → Confirmer (Gemini APPROVE) → auto-checkpoint →
@@ -128,11 +128,13 @@ hardware. Read-only at most.
 
 ## Roadmap
 
-- **v0.8 — Chorus provider architecture:** add arbitrary providers (OpenRouter, **local
-  Ollama**, custom endpoints), semantic (meaning-based) routing, multi-AI consensus.
+- **v0.8 — Chorus provider architecture ✅:** custom providers (`chorus add`, OpenAI-
+  compatible — OpenRouter, local Ollama, custom endpoints), **semantic routing**, multi-AI
+  **consensus**, and a multi-judge **model benchmark** (`chorus bench`, 0–1000 scale).
 - **v0.9 — Smarter automation:** offline/online auto-switch, startup & background
   optimizer (a new *action* behind the whitelist + safety stack), more safe actions.
-- **v1.0 — Stable release:** config file, installer, docs, polished UX. First public CLI.
+- **v1.0 — Stable release:** config file, installer, docs, **code signing** (so Smart App
+  Control users can run it), polished UX. First public CLI.
 - **Beyond (APEX Core / Pulse):** Core as a long-running service + plugin system; Pulse
   GUI (Tauri + React) on top of the Velox engine.
 
