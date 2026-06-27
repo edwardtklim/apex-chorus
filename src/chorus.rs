@@ -483,6 +483,95 @@ pub async fn test_all() {
     }
 }
 
+/// 심판 응답에서 0~10 점수 추출.
+fn parse_score(s: &str) -> Option<f64> {
+    let cleaned: String = s
+        .chars()
+        .map(|c| if c.is_ascii_digit() || c == '.' { c } else { ' ' })
+        .collect();
+    cleaned
+        .split_whitespace()
+        .next()?
+        .parse::<f64>()
+        .ok()
+        .map(|v| v.clamp(0.0, 10.0))
+}
+
+/// AI 모델 벤치 (LLM-as-judge). 연결된 모든 모델에 같은 질문 → judge가 채점 → 리더보드.
+/// `velox chorus bench [--judge <model>]`
+pub async fn bench(judge: &str) {
+    println!("=== APEX Chorus — AI 모델 벤치 (LLM-judge) ===");
+    println!("심판: {} · 동일 질문을 각 모델에 → judge가 0~10 채점\n", judge);
+
+    let prompts: [(&str, &str); 3] = [
+        ("코딩", "Write a Rust function `fib(n: u64) -> u64` returning the nth Fibonacci number. Code only."),
+        ("추론", "A train travels 60 km in 45 minutes. What is its speed in km/h? Give the number and one line of reasoning."),
+        ("지식", "In one sentence, what is the key difference between TCP and UDP?"),
+    ];
+
+    // 대상 = 키 있는 내장 + 커스텀
+    let mut models: Vec<String> = Vec::new();
+    for m in ["claude", "gpt", "gemini", "grok"] {
+        if env_var_for(m).map(|v| env::var(v).is_ok()).unwrap_or(false) {
+            models.push(m.to_string());
+        }
+    }
+    for p in load_providers() {
+        models.push(p.name);
+    }
+    if models.is_empty() {
+        println!("테스트할 모델 없음 (키 설정 필요).");
+        return;
+    }
+
+    let mut board: Vec<(String, f64, u32, u128)> = Vec::new(); // (model, total, n, latency_ms)
+    for model in &models {
+        println!("[{}] 측정 중...", model);
+        let (mut total, mut n, mut lat) = (0.0_f64, 0u32, 0u128);
+        for (cat, q) in &prompts {
+            let t = std::time::Instant::now();
+            let answer = query_text_with(model, q).await;
+            lat += t.elapsed().as_millis();
+            let answer = match answer {
+                Some(a) => a,
+                None => {
+                    println!("  {} ✗ 응답 실패", cat);
+                    continue;
+                }
+            };
+            let jp = format!(
+                "You are an impartial evaluator. Rate the answer's correctness and quality from 0 to 10. \
+                 Reply with ONLY a number.\n\nQuestion: {}\nAnswer: {}",
+                q, answer
+            );
+            let score = query_text_with(judge, &jp)
+                .await
+                .and_then(|s| parse_score(&s))
+                .unwrap_or(0.0);
+            println!("  {} → {:.1}/10", cat, score);
+            total += score;
+            n += 1;
+        }
+        board.push((model.clone(), total, n, lat));
+    }
+
+    board.sort_by(|a, b| {
+        let av = a.1 / a.2.max(1) as f64;
+        let bv = b.1 / b.2.max(1) as f64;
+        bv.partial_cmp(&av).unwrap()
+    });
+
+    println!("\n=== 리더보드 (judge: {}) ===", judge);
+    println!("{:<14} {:>8} {:>10}", "모델", "점수/10", "평균지연");
+    println!("{}", "-".repeat(34));
+    for (model, total, n, lat) in &board {
+        let avg = if *n > 0 { total / *n as f64 } else { 0.0 };
+        let avg_lat = lat / (*n).max(1) as u128;
+        println!("{:<14} {:>8.1} {:>8}ms", model, avg, avg_lat);
+    }
+    println!("\n※ LLM-judge는 심판 모델의 편향(자기 스타일·길이 선호)이 있음. 절대 점수 아님, 상대 참고용.");
+}
+
 pub fn show_models() {
     let models = [
         ("claude", "ANTHROPIC_API_KEY", "Code / Architecture"),

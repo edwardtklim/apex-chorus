@@ -165,6 +165,11 @@ enum ChorusCommands {
     },
     /// 연결된 모든 AI에 핑을 보내 응답 검증
     Test,
+    /// AI 모델 벤치 — 같은 질문을 모든 모델에 → judge가 채점 → 리더보드
+    Bench {
+        #[arg(long, default_value = "gpt")]
+        judge: String,
+    },
 }
 
 #[tokio::main]
@@ -240,6 +245,7 @@ async fn main() {
                 chorus::add_provider(&name, &base_url, &model, &key)
             }
             ChorusCommands::Test => chorus::test_all().await,
+            ChorusCommands::Bench { judge } => chorus::bench(&judge).await,
         },
     }
 }
