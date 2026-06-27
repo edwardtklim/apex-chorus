@@ -1,4 +1,3 @@
-mod util;
 mod chorus;
 mod thermals;
 mod gpu;
@@ -7,7 +6,6 @@ mod fps;
 mod diagnose;
 mod checkpoint;
 mod daemon;
-mod watch;
 mod dashboard;
 mod drivers;
 mod doctor;

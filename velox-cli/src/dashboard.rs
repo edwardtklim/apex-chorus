@@ -21,7 +21,7 @@ fn power_plan() -> String {
         .output()
         .ok()
         .map(|o| {
-            let s = crate::util::decode_console(&o.stdout);
+            let s = velox_core::util::decode_console(&o.stdout);
             s.split('(')
                 .nth(1)
                 .and_then(|t| t.split(')').next())
@@ -80,7 +80,7 @@ fn gpu() -> Option<GpuShot> {
 }
 
 pub async fn run() {
-    let mut watcher = crate::watch::Watcher::new();
+    let mut watcher = velox_core::watch::Watcher::new();
     let drivers = crate::drivers::problem_summary(); // 시작 시 1회 (변동 드묾)
 
     loop {

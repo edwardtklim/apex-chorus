@@ -94,7 +94,7 @@ struct Pipeline {
 
 fn read_active_plan() -> (String, String) {
     if let Ok(out) = Command::new("powercfg").arg("/getactivescheme").output() {
-        let s = crate::util::decode_console(&out.stdout);
+        let s = velox_core::util::decode_console(&out.stdout);
         let guid = s
             .split("GUID:")
             .nth(1)

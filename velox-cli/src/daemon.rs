@@ -51,7 +51,7 @@ pub async fn run(interval_secs: u64, auto: bool) {
     let mut last_fire: Option<Instant> = None;
     let mut hot_streak: u32 = 0;
     let mut tick: u64 = 0;
-    let mut watcher = crate::watch::Watcher::new(); // Velox Watch: CPU/RAM/Disk/Net
+    let mut watcher = velox_core::watch::Watcher::new(); // Velox Watch: CPU/RAM/Disk/Net
 
     loop {
         tick += 1;
