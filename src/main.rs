@@ -7,6 +7,7 @@ mod fps;
 mod diagnose;
 mod checkpoint;
 mod daemon;
+mod watch;
 mod drivers;
 mod doctor;
 mod tempcheck;

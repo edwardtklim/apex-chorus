@@ -41,6 +41,7 @@ pub async fn run(interval_secs: u64, auto: bool) {
             "감시+제안만"
         }
     );
+    println!("감시: 온도 · CPU · RAM · Disk · Network (임계 초과 시 EVENT)\n");
     log_event(&format!(
         "daemon start interval={} auto={}",
         interval_secs, auto
@@ -50,6 +51,7 @@ pub async fn run(interval_secs: u64, auto: bool) {
     let mut last_fire: Option<Instant> = None;
     let mut hot_streak: u32 = 0;
     let mut tick: u64 = 0;
+    let mut watcher = crate::watch::Watcher::new(); // Velox Watch: CPU/RAM/Disk/Net
 
     loop {
         tick += 1;
@@ -67,6 +69,14 @@ pub async fn run(interval_secs: u64, auto: bool) {
             print!("  ⚠ 이상 {}/{}", hot_streak, CONSECUTIVE_HOT_REQUIRED);
         }
         println!();
+
+        // Velox Watch: CPU/RAM/Disk/Network 감시 + 임계 이벤트 (기존 온도 흐름과 독립)
+        let (whb, wevents) = watcher.tick(interval_secs);
+        println!("         {}", whb);
+        for e in &wevents {
+            println!("         ⚠ EVENT: {}", e);
+            log_event(&format!("watch event: {}", e));
+        }
 
         // 2) 지속성 + 쿨다운 둘 다 통과해야 무거운 AI 반응 가동
         let cooldown_ok = last_fire.map_or(true, |t| t.elapsed() >= cooldown);
