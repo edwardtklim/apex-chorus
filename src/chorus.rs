@@ -27,6 +27,35 @@ pub fn route_model(prompt: &str) -> &'static str {
     }
 }
 
+/// 의미기반 라우팅 — 라우터 모델이 요청 의도를 보고 최적 모델을 고른다.
+/// 실패하면 키워드 라우팅(route_model)으로 폴백.
+pub async fn route_semantic(prompt: &str) -> String {
+    let router_prompt = format!(
+        "You are a routing classifier. Pick the single best AI model for the user's request.\n\
+         - claude: coding, architecture, systems, careful step-by-step reasoning\n\
+         - gpt: strategy, business, general problem solving\n\
+         - gemini: documents, analysis, summarization, multimodal\n\
+         - grok: latest news, real-time/current events, search\n\
+         Reply with ONLY one word: claude, gpt, gemini, or grok.\n\n\
+         Request: {}",
+        prompt
+    );
+    // 라우터는 빠른 gpt 사용 (없으면 claude). 둘 다 안 되면 키워드 폴백.
+    for router in ["gpt", "claude"] {
+        if env_var_for(router).map(|v| env::var(v).is_ok()).unwrap_or(false) {
+            if let Some(resp) = query_text_with(router, &router_prompt).await {
+                let pick = resp.to_lowercase();
+                for m in ["claude", "gpt", "gemini", "grok"] {
+                    if pick.contains(m) {
+                        return m.to_string();
+                    }
+                }
+            }
+        }
+    }
+    route_model(prompt).to_string()
+}
+
 fn get_system_context() -> String {
     use serde::Deserialize;
     use wmi::{COMLibrary, WMIConnection};

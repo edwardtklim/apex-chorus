@@ -228,10 +228,10 @@ async fn main() {
             ChorusCommands::Ask { prompt, use_model, no_context } => {
                 let (model, auto) = match use_model {
                     Some(m) => (m, false),
-                    None => (chorus::route_model(&prompt).to_string(), true),
+                    None => (chorus::route_semantic(&prompt).await, true),
                 };
                 if auto {
-                    println!("→ Auto-routed to: {}\n", model);
+                    println!("→ Auto-routed to: {} (semantic)\n", model);
                 } else {
                     println!("→ Using: {}\n", model);
                 }
