@@ -661,6 +661,73 @@ pub async fn bench(hard: bool) {
     println!("\n※ 자기 답은 자기가 채점 안 함 → self-bias 완화. 패널 공통 편향은 남음(상대 참고용).");
 }
 
+/// AI 합의 — 같은 질문을 여러 모델에 → 공통점/차이를 종합. `velox chorus consensus "질문"`
+pub async fn consensus(question: &str) {
+    println!("=== APEX Chorus — AI 합의 (Consensus) ===\n");
+
+    let mut models: Vec<String> = Vec::new();
+    for m in ["claude", "gpt", "gemini", "grok"] {
+        if env_var_for(m).map(|v| env::var(v).is_ok()).unwrap_or(false) {
+            models.push(m.to_string());
+        }
+    }
+    for p in load_providers() {
+        models.push(p.name);
+    }
+    if models.len() < 2 {
+        println!("합의하려면 응답 가능한 모델이 2개 이상 필요.");
+        return;
+    }
+
+    println!("질문: {}\n", question);
+    let mut answers: Vec<(String, String)> = Vec::new();
+    for model in &models {
+        print!("[{}] 응답 중...", model);
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+        match query_text_with(model, question).await {
+            Some(a) => {
+                println!(" ✓");
+                answers.push((model.clone(), a));
+            }
+            None => println!(" ✗"),
+        }
+    }
+    if answers.len() < 2 {
+        println!("\n응답이 2개 미만이라 합의 불가.");
+        return;
+    }
+
+    println!("\n--- 각 모델 답변(앞부분) ---");
+    for (m, a) in &answers {
+        let snip: String = a.chars().take(110).collect::<String>().replace('\n', " ");
+        let more = if a.chars().count() > 110 { "…" } else { "" };
+        println!("[{}] {}{}", m, snip, more);
+    }
+
+    let mut combined = String::new();
+    for (m, a) in &answers {
+        combined.push_str(&format!("[{}]\n{}\n\n", m, a));
+    }
+    let synth_prompt = format!(
+        "아래는 여러 AI가 같은 질문에 답한 것이다. 한국어로 간결하게:\n\
+         1) 공통된 핵심 (모두 동의하는 내용)\n\
+         2) 의견이 갈리는 지점 (차이/불일치)\n\
+         답변을 그대로 반복하지 말고 합의/차이만 정리하라.\n\n\
+         질문: {}\n\n{}",
+        question, combined
+    );
+    let synthesizer = if env_var_for("claude").map(|v| env::var(v).is_ok()).unwrap_or(false) {
+        "claude".to_string()
+    } else {
+        answers[0].0.clone()
+    };
+    println!("\n--- 종합 (by {}) ---", synthesizer);
+    match query_text_with(&synthesizer, &synth_prompt).await {
+        Some(s) => println!("{}", s.trim()),
+        None => println!("(종합 실패)"),
+    }
+}
+
 pub fn show_models() {
     let models = [
         ("claude", "ANTHROPIC_API_KEY", "Code / Architecture"),

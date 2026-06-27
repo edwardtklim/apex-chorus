@@ -170,6 +170,10 @@ enum ChorusCommands {
         #[arg(long)]
         hard: bool,
     },
+    /// AI 합의 — 같은 질문을 여러 모델에 → 공통점/차이 정리: chorus consensus "질문"
+    Consensus {
+        question: String,
+    },
 }
 
 #[tokio::main]
@@ -246,6 +250,7 @@ async fn main() {
             }
             ChorusCommands::Test => chorus::test_all().await,
             ChorusCommands::Bench { hard } => chorus::bench(hard).await,
+            ChorusCommands::Consensus { question } => chorus::consensus(&question).await,
         },
     }
 }
