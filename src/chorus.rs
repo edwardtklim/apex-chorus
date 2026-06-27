@@ -497,17 +497,33 @@ fn parse_score(s: &str) -> Option<f64> {
         .map(|v| v.clamp(0.0, 10.0))
 }
 
+/// 벤치 문제 세트. hard=true면 변별력 있는 어려운(오염 적은 새) 문제.
+fn prompt_set(hard: bool) -> Vec<(&'static str, &'static str)> {
+    if hard {
+        vec![
+            ("코딩", "Write a Rust function `longest_palindrome(s: &str) -> String` returning the longest palindromic substring. Code only, correct and efficient."),
+            ("추론", "A bat and a ball cost $1.10 total. The bat costs $1.00 more than the ball. How much is the ball? Show your reasoning."),
+            ("수학", "What is the remainder when 7^100 is divided by 13? Show the key step."),
+            ("지식", "In exactly 2 sentences, explain why TCP uses a three-way handshake instead of a two-way one."),
+            ("글쓰기", "Write one haiku (5-7-5 syllables) about a compiler error. Output only the haiku."),
+        ]
+    } else {
+        vec![
+            ("코딩", "Write a Rust function `fib(n: u64) -> u64` returning the nth Fibonacci number. Code only."),
+            ("추론", "A train travels 60 km in 45 minutes. What is its speed in km/h?"),
+            ("지식", "In one sentence, what is the key difference between TCP and UDP?"),
+        ]
+    }
+}
+
 /// AI 모델 벤치 (LLM-as-judge). 연결된 모든 모델에 같은 질문 → judge가 채점 → 리더보드.
-/// `velox chorus bench [--judge <model>]`
-pub async fn bench(judge: &str) {
-    println!("=== APEX Chorus — AI 모델 벤치 (LLM-judge) ===");
+/// 측정: 점수(카테고리별), 속도(지연), 처리량(chars/s), 크기(응답 길이).
+/// `velox chorus bench [--judge <model>] [--hard]`
+pub async fn bench(judge: &str, hard: bool) {
+    println!("=== APEX Chorus — AI 모델 벤치 (LLM-judge{}) ===", if hard { ", HARD" } else { "" });
     println!("심판: {} · 동일 질문을 각 모델에 → judge가 0~10 채점\n", judge);
 
-    let prompts: [(&str, &str); 3] = [
-        ("코딩", "Write a Rust function `fib(n: u64) -> u64` returning the nth Fibonacci number. Code only."),
-        ("추론", "A train travels 60 km in 45 minutes. What is its speed in km/h? Give the number and one line of reasoning."),
-        ("지식", "In one sentence, what is the key difference between TCP and UDP?"),
-    ];
+    let prompts = prompt_set(hard);
 
     // 대상 = 키 있는 내장 + 커스텀
     let mut models: Vec<String> = Vec::new();
@@ -524,10 +540,18 @@ pub async fn bench(judge: &str) {
         return;
     }
 
-    let mut board: Vec<(String, f64, u32, u128)> = Vec::new(); // (model, total, n, latency_ms)
+    struct Row {
+        model: String,
+        cat_scores: Vec<f64>,
+        lat_ms: u128,
+        len: usize,
+    }
+    let mut rows: Vec<Row> = Vec::new();
+
     for model in &models {
         println!("[{}] 측정 중...", model);
-        let (mut total, mut n, mut lat) = (0.0_f64, 0u32, 0u128);
+        let mut cat_scores = Vec::new();
+        let (mut lat, mut len) = (0u128, 0usize);
         for (cat, q) in &prompts {
             let t = std::time::Instant::now();
             let answer = query_text_with(model, q).await;
@@ -536,9 +560,11 @@ pub async fn bench(judge: &str) {
                 Some(a) => a,
                 None => {
                     println!("  {} ✗ 응답 실패", cat);
+                    cat_scores.push(0.0);
                     continue;
                 }
             };
+            len += answer.chars().count();
             let jp = format!(
                 "You are an impartial evaluator. Rate the answer's correctness and quality from 0 to 10. \
                  Reply with ONLY a number.\n\nQuestion: {}\nAnswer: {}",
@@ -549,27 +575,44 @@ pub async fn bench(judge: &str) {
                 .and_then(|s| parse_score(&s))
                 .unwrap_or(0.0);
             println!("  {} → {:.1}/10", cat, score);
-            total += score;
-            n += 1;
+            cat_scores.push(score);
         }
-        board.push((model.clone(), total, n, lat));
+        rows.push(Row { model: model.clone(), cat_scores, lat_ms: lat, len });
     }
 
-    board.sort_by(|a, b| {
-        let av = a.1 / a.2.max(1) as f64;
-        let bv = b.1 / b.2.max(1) as f64;
-        bv.partial_cmp(&av).unwrap()
-    });
+    let np = prompts.len().max(1);
+    let avg_score = |r: &Row| r.cat_scores.iter().sum::<f64>() / np as f64;
+    rows.sort_by(|a, b| avg_score(b).partial_cmp(&avg_score(a)).unwrap());
 
     println!("\n=== 리더보드 (judge: {}) ===", judge);
-    println!("{:<14} {:>8} {:>10}", "모델", "점수/10", "평균지연");
-    println!("{}", "-".repeat(34));
-    for (model, total, n, lat) in &board {
-        let avg = if *n > 0 { total / *n as f64 } else { 0.0 };
-        let avg_lat = lat / (*n).max(1) as u128;
-        println!("{:<14} {:>8.1} {:>8}ms", model, avg, avg_lat);
+    println!("{:<12}{:>8}{:>9}{:>11}{:>9}", "모델", "점수/10", "속도ms", "처리량c/s", "크기");
+    println!("{}", "-".repeat(49));
+    for r in &rows {
+        let sc = avg_score(r);
+        let lat = r.lat_ms / np as u128;
+        let size = r.len / np;
+        let thru = if r.lat_ms > 0 {
+            r.len as f64 / (r.lat_ms as f64 / 1000.0)
+        } else {
+            0.0
+        };
+        println!("{:<12}{:>8.1}{:>7}ms{:>11.0}{:>9}", r.model, sc, lat, thru, size);
     }
-    println!("\n※ LLM-judge는 심판 모델의 편향(자기 스타일·길이 선호)이 있음. 절대 점수 아님, 상대 참고용.");
+
+    println!("\n=== 카테고리별 점수 ===");
+    print!("{:<12}", "모델");
+    for (cat, _) in &prompts {
+        print!("{:>7}", cat);
+    }
+    println!();
+    for r in &rows {
+        print!("{:<12}", r.model);
+        for s in &r.cat_scores {
+            print!("{:>7.1}", s);
+        }
+        println!();
+    }
+    println!("\n※ LLM-judge는 심판 편향 있음(상대 참고용). 쉬운 문제는 다 만점이라 변별 안 됨 → --hard 권장.");
 }
 
 pub fn show_models() {
