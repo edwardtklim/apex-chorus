@@ -173,7 +173,7 @@ pub async fn run() {
          [PC 상태]\n{}",
         snap
     );
-    match crate::chorus::query_text_with("claude", &prompt).await {
+    match velox_core::ai::query_text_with("claude", &prompt).await {
         Some(t) => println!("{}", t.trim()),
         None => println!("(AI 호출 실패 — API 키 확인)"),
     }

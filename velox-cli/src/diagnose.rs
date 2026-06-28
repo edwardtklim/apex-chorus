@@ -194,7 +194,7 @@ fn extract_json(s: &str) -> Option<&str> {
 
 async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
     // 1) Customer (Claude) — 의도/상황 이해
-    let intent = crate::chorus::query_text_with(
+    let intent = velox_core::ai::query_text_with(
         "claude",
         &format!(
             "다음 시스템 상태에서 사용자가 가장 걱정할 점이나 원하는 바를 한국어 한 줄로 요약:\n{}",
@@ -217,7 +217,7 @@ async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
         intent.trim(),
         snap.summary
     );
-    let eng_raw = crate::chorus::query_text_with("gpt", &eng_prompt).await?;
+    let eng_raw = velox_core::ai::query_text_with("gpt", &eng_prompt).await?;
     let proposal: AiProposal = serde_json::from_str(extract_json(&eng_raw)?).ok()?;
     let action = validate(&proposal, snap);
 
@@ -230,7 +230,7 @@ async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
                  안전하고 합리적이면 'APPROVE', 아니면 'REJECT'로 시작해 한국어 한 줄 이유.",
                 label, snap.summary
             );
-            let r = crate::chorus::query_text_with("gemini", &conf_prompt)
+            let r = velox_core::ai::query_text_with("gemini", &conf_prompt)
                 .await
                 .unwrap_or_else(|| "REJECT (검수 AI 응답 없음)".to_string());
             (r.to_uppercase().contains("APPROVE"), r)

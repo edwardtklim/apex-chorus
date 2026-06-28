@@ -4,6 +4,8 @@
 //! 원칙: **엔진은 데이터를 반환하고, 표시는 호출자(CLI 등)가 한다.**
 //!
 //! Phase 1 — 읽기 엔진: util(콘솔 디코딩), watch(CPU/RAM/Disk/Net).
+//! Phase 2 — AI 엔진: ai(provider 호출·라우팅).
 
+pub mod ai;
 pub mod util;
 pub mod watch;

@@ -137,7 +137,7 @@ pub async fn run(seconds: u64) {
          ※ 조언만 한다. 시스템을 직접 바꾸지 않는다."
     );
     println!("\n[AI 게임 성능 진단 — 조언만]");
-    match crate::chorus::query_text_with("claude", &prompt).await {
+    match velox_core::ai::query_text_with("claude", &prompt).await {
         Some(t) => println!("{}", t.trim()),
         None => println!("(AI 호출 실패 — API 키 확인)"),
     }

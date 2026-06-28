@@ -2387,6 +2387,9 @@ name = "velox-core"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "reqwest",
+ "serde",
+ "serde_json",
  "sysinfo",
 ]
 
