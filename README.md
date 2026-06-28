@@ -17,6 +17,22 @@ APEX
 
 ---
 
+## Architecture
+
+A Cargo workspace that separates the **engine** from the **interface**:
+
+```
+velox-core/  (lib)  — engine: util · watch · ai · checkpoint · action   (returns data)
+velox-cli/   (bin)  — interface: commands · output · interactive approval
+```
+
+`velox-core` is a reusable library — a future GUI (Pulse) or plugins import the same
+engine. This is the "features → platform" transition, done by incremental extraction
+(see [velox-core/README.md](velox-core/README.md)). Principle: **engine returns data,
+the caller presents.**
+
+---
+
 ## Features
 
 | Command | What it does |
@@ -105,7 +121,11 @@ Claude / GPT / Gemini / Grok APIs · `clap` · `tokio` · `reqwest`
 
 ---
 
-## Status (v0.8.0)
+## Status (v0.9.0)
+
+**Core extraction:** the project is now a workspace — the engine (`velox-core`:
+util · watch · ai · checkpoint · action) is split from the CLI (`velox-cli`), so the
+same engine can back a future GUI / plugins.
 
 **Verified end-to-end:** the full AI action loop is proven via `diagnose --simulate-hot` —
 Customer (Claude) → Engineer (GPT) → Confirmer (Gemini APPROVE) → auto-checkpoint →
@@ -131,12 +151,13 @@ hardware. Read-only at most.
 - **v0.8 — Chorus provider architecture ✅:** custom providers (`chorus add`, OpenAI-
   compatible — OpenRouter, local Ollama, custom endpoints), **semantic routing**, multi-AI
   **consensus**, and a multi-judge **model benchmark** (`chorus bench`, 0–1000 scale).
-- **v0.9 — Smarter automation:** offline/online auto-switch, startup & background
-  optimizer (a new *action* behind the whitelist + safety stack), more safe actions.
+- **v0.9 — Core extraction ✅ / smarter automation:** workspace split (`velox-core`
+  engine + `velox-cli` interface) ✅; next: offline/online auto-switch, startup &
+  background optimizer (a new *action* behind the whitelist + safety stack).
 - **v1.0 — Stable release:** config file, installer, docs, **code signing** (so Smart App
   Control users can run it), polished UX. First public CLI.
-- **Beyond (APEX Core / Pulse):** Core as a long-running service + plugin system; Pulse
-  GUI (Tauri + React) on top of the Velox engine.
+- **Beyond (APEX Core / Pulse):** `velox-core` grows into a long-running service +
+  plugin system; Pulse GUI (Tauri + React) imports the same engine.
 
 ---
 
