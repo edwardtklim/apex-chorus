@@ -18,15 +18,6 @@ use wmi::{COMLibrary, WMIConnection};
 const TEMP_WARN_C: f32 = 85.0;
 const LOG_FILE: &str = "velox_actions.log";
 
-/// 전원 구성표 화이트리스트. AI는 이 key 중에서만 고를 수 있다. (GUID 하드코딩)
-fn plan_by_key(key: &str) -> Option<(&'static str, &'static str)> {
-    match key {
-        "balanced" => Some(("Balanced", "381b4222-f694-41f0-9685-ff5bb260df2e")),
-        "high_performance" => Some(("High performance", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c")),
-        "power_saver" => Some(("Power saver", "a1841308-3541-4fab-bc81-f71556f20b4a")),
-        _ => None,
-    }
-}
 
 #[derive(Deserialize)]
 #[serde(rename = "MSAcpi_ThermalZoneTemperature")]
@@ -172,7 +163,7 @@ fn validate(p: &AiProposal, snap: &Snapshot) -> Action {
         .map(|s| s.to_string())
         .or_else(|| p.action.split('|').nth(1).map(|s| s.trim().to_string()))
         .unwrap_or_default();
-    match plan_by_key(&key) {
+    match velox_core::action::plan_by_key(&key) {
         Some((label, guid)) if guid.to_lowercase() != snap.plan_guid.to_lowercase() => {
             Action::SetPowerPlan {
                 label,
@@ -254,7 +245,7 @@ async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
 
 fn propose_rule_based(snap: &Snapshot) -> Action {
     if snap.is_hot() {
-        if let Some((label, guid)) = plan_by_key("balanced") {
+        if let Some((label, guid)) = velox_core::action::plan_by_key("balanced") {
             if guid.to_lowercase() != snap.plan_guid.to_lowercase() {
                 return Action::SetPowerPlan {
                     label,
@@ -269,20 +260,12 @@ fn propose_rule_based(snap: &Snapshot) -> Action {
 
 // ---------------- 실행 ----------------
 
-fn apply_power_plan(guid: &str) -> bool {
-    Command::new("powercfg")
-        .args(["/setactive", guid])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 fn execute_with_safety(label: &str, guid: &str, rollback_guid: &str) {
     // 위험 동작 전 자동 체크포인트 (AI 오판/블루스크린 대비)
-    crate::checkpoint::save_silent();
+    velox_core::checkpoint::save_silent();
     println!("[체크포인트 저장됨 — 문제 시 `velox checkpoint restore`]");
 
-    if !apply_power_plan(guid) {
+    if !velox_core::action::apply_power_plan(guid) {
         println!("✗ 실행 실패 (권한/모드 부재).");
         return;
     }

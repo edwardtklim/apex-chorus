@@ -5,7 +5,10 @@
 //!
 //! Phase 1 — 읽기 엔진: util(콘솔 디코딩), watch(CPU/RAM/Disk/Net).
 //! Phase 2 — AI 엔진: ai(provider 호출·라우팅).
+//! Phase 3 — 안전/액션 엔진: checkpoint(상태 저장·복원), action(화이트리스트 동작).
 
+pub mod action;
 pub mod ai;
+pub mod checkpoint;
 pub mod util;
 pub mod watch;
