@@ -199,3 +199,78 @@ async fn query_openai_compatible(
         .as_str()
         .map(|s| s.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_var_aliases_resolve() {
+        assert_eq!(env_var_for("claude"), Some("ANTHROPIC_API_KEY"));
+        assert_eq!(env_var_for("anthropic"), Some("ANTHROPIC_API_KEY"));
+        assert_eq!(env_var_for("gpt"), Some("OPENAI_API_KEY"));
+        assert_eq!(env_var_for("GEMINI"), Some("GEMINI_API_KEY")); // 대소문자 무시
+        assert_eq!(env_var_for("grok"), Some("GROK_API_KEY"));
+        assert_eq!(env_var_for("unknown_provider"), None);
+    }
+
+    #[test]
+    fn keyword_routing_picks_specialist() {
+        assert_eq!(route_model("fix this rust error"), "claude");
+        assert_eq!(route_model("코드 버그 봐줘"), "claude");
+        assert_eq!(route_model("go-to-market strategy"), "gpt");
+        assert_eq!(route_model("latest news today"), "grok");
+        assert_eq!(route_model("analyze this document"), "gemini");
+    }
+
+    #[test]
+    fn routing_defaults_to_claude() {
+        assert_eq!(route_model("hello there"), "claude");
+    }
+}
+
+#[cfg(test)]
+mod net_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    /// 응답 본문을 고정으로 돌려주는 1회용 로컬 HTTP 목 서버. base_url을 반환한다.
+    /// (외부 mock 크레이트 없이 std만 — 진짜 네트워크는 안 탐)
+    fn spawn_mock(body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("목 서버 bind 실패");
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf); // 요청은 일부만 읽어도 응답엔 충분
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn parses_openai_style_reply() {
+        let base = spawn_mock(r#"{"choices":[{"message":{"content":"mocked reply"}}]}"#);
+        let client = Client::new();
+        let got = query_openai_compatible(&client, &base, "test-model", "", "hi").await;
+        assert_eq!(got, Some("mocked reply".to_string()));
+    }
+
+    #[tokio::test]
+    async fn returns_none_on_unexpected_shape() {
+        // 서버가 형식 다른 JSON을 줘도 패닉 없이 None.
+        let base = spawn_mock(r#"{"error":"rate limited"}"#);
+        let client = Client::new();
+        let got = query_openai_compatible(&client, &base, "test-model", "", "hi").await;
+        assert_eq!(got, None);
+    }
+}

@@ -427,3 +427,89 @@ pub async fn react(auto: bool) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BALANCED: &str = "381b4222-f694-41f0-9685-ff5bb260df2e";
+    const HIGH_PERF: &str = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
+
+    fn snap(max_temp_c: Option<f32>, cpu_usage: f32, plan_guid: &str) -> Snapshot {
+        Snapshot {
+            max_temp_c,
+            cpu_usage,
+            plan_guid: plan_guid.to_string(),
+            plan_label: "Test".to_string(),
+            summary: String::new(),
+        }
+    }
+
+    fn proposal(action: &str, target: Option<&str>) -> AiProposal {
+        AiProposal {
+            action: action.to_string(),
+            target: target.map(|s| s.to_string()),
+            reason: String::new(),
+        }
+    }
+
+    // --- 현실성 검사(suspicious): AI에 데이터 주기 전 안전 게이트 ---
+
+    #[test]
+    fn suspicious_flags_impossible_temperature() {
+        assert!(suspicious(&snap(Some(150.0), 50.0, BALANCED)).is_some());
+        assert!(suspicious(&snap(Some(5.0), 50.0, BALANCED)).is_some());
+    }
+
+    #[test]
+    fn suspicious_flags_hot_but_idle() {
+        // 90°C인데 CPU 5% → 센서/버그 의심 → 동작 보류.
+        assert!(suspicious(&snap(Some(90.0), 5.0, BALANCED)).is_some());
+    }
+
+    #[test]
+    fn suspicious_passes_real_load_and_missing_sensor() {
+        assert!(suspicious(&snap(Some(90.0), 80.0, BALANCED)).is_none()); // 진짜 부하
+        assert!(suspicious(&snap(Some(60.0), 30.0, BALANCED)).is_none()); // 평범
+        assert!(suspicious(&snap(None, 30.0, BALANCED)).is_none()); // 센서 실패 → 의심 아님
+    }
+
+    // --- 화이트리스트 검증(validate): AI 제안 → 안전한 Action ---
+
+    #[test]
+    fn validate_accepts_whitelisted_switch() {
+        let s = snap(Some(90.0), 80.0, BALANCED);
+        match validate(&proposal("set_power_plan", Some("high_performance")), &s) {
+            Action::SetPowerPlan { guid, rollback_guid, .. } => {
+                assert_eq!(guid, HIGH_PERF);
+                assert_eq!(rollback_guid.as_str(), BALANCED); // 롤백 대상 = 직전 상태
+            }
+            Action::None => panic!("화이트리스트 동작이 승인돼야 함"),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_non_whitelisted_action() {
+        // AI가 화이트리스트 밖 동작을 지어내도 None — 명령 생성 차단.
+        let s = snap(Some(90.0), 80.0, BALANCED);
+        assert!(matches!(validate(&proposal("delete_system_files", None), &s), Action::None));
+        assert!(matches!(validate(&proposal("set_power_plan", Some("turbo_mode")), &s), Action::None));
+    }
+
+    #[test]
+    fn validate_skips_when_already_in_target_plan() {
+        // 이미 balanced인데 balanced 제안 → 변화 없음(None).
+        let s = snap(Some(90.0), 80.0, BALANCED);
+        assert!(matches!(validate(&proposal("set_power_plan", Some("balanced")), &s), Action::None));
+    }
+
+    #[test]
+    fn validate_parses_combined_action_target() {
+        // "set_power_plan|balanced" 합쳐진 형태도 파싱 (현재 high_perf → balanced).
+        let s = snap(Some(90.0), 80.0, HIGH_PERF);
+        match validate(&proposal("set_power_plan|balanced", None), &s) {
+            Action::SetPowerPlan { guid, .. } => assert_eq!(guid, BALANCED),
+            Action::None => panic!("합쳐진 형태도 파싱돼야 함"),
+        }
+    }
+}
