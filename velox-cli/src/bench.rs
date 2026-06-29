@@ -173,6 +173,101 @@ pub fn run_stability(seconds: u64) {
     println!("\n* 유지율 = 구간 성능 / 최고 성능. 100%에 가까울수록 발열·쓰로틀링 없이 일정.");
 }
 
+// ---------------- 쿨러 부하 테스트 (thermal) ----------------
+
+/// 전코어 지속 부하 동안 온도·주파수를 1초마다 샘플링해, 온도가 임계(limit °C)를
+/// 넘는지 판정한다. 온도를 못 읽으면(관리자 권한/보드 미지원) 주파수 하락으로 쓰로틀 추정.
+pub fn run_thermal(seconds: u64, limit: f32) {
+    let cores = available_cores();
+    println!("=== APEX Velox — bench thermal (쿨러 부하 테스트) ===");
+    println!("전코어({}) {}초 지속 부하 · 임계 {:.0}°C\n", cores, seconds, limit);
+
+    if velox_core::snapshot::max_temp_c().is_none() {
+        println!("⚠ CPU 온도 센서 읽기 실패 (관리자 권한 필요/보드 미지원).");
+        println!("  → 온도 대신 성능 유지율(처리량 하락)로 쓰로틀을 추정합니다.\n");
+    }
+
+    // 전코어 부하 스레드 — 각자 matmul을 돌리며 완료 횟수를 누적(처리량 측정용).
+    let unit = flops_per_matmul(MATMUL_N);
+    let count = Arc::new(AtomicU64::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let mut handles = Vec::new();
+    for _ in 0..cores {
+        let count = count.clone();
+        let stop = stop.clone();
+        handles.push(thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let _ = matmul(MATMUL_N);
+                count.fetch_add(1, Ordering::Relaxed);
+            }
+        }));
+    }
+
+    // 1초마다 온도 + 처리량(GFLOPS) 샘플.
+    let mut max_temp: Option<f32> = None;
+    let mut breached = false;
+    let mut gflops: Vec<f64> = Vec::new();
+    let mut prev = 0u64;
+
+    for sec in 0..seconds {
+        let t0 = Instant::now();
+        thread::sleep(Duration::from_secs(1));
+
+        let temp = velox_core::snapshot::max_temp_c();
+        if let Some(t) = temp {
+            max_temp = Some(max_temp.map_or(t, |m| m.max(t)));
+            if t >= limit {
+                breached = true;
+            }
+        }
+
+        let now = count.load(Ordering::Relaxed);
+        let gf = (now - prev) as f64 * unit / t0.elapsed().as_secs_f64() / 1e9;
+        prev = now;
+        gflops.push(gf);
+
+        if sec % 10 == 0 || sec + 1 == seconds {
+            let ts = temp.map(|t| format!("{:.1}°C", t)).unwrap_or_else(|| "N/A".into());
+            println!("  {:>3}s · 온도 {} · 처리량 {:.0} GFLOPS", sec + 1, ts, gf);
+        }
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    for h in handles {
+        let _ = h.join();
+    }
+
+    println!("\n--- 결과 ({}초 전코어 부하) ---", seconds);
+    match max_temp {
+        Some(mt) => {
+            println!("최고 온도: {:.1}°C (임계 {:.0}°C)", mt, limit);
+            if breached {
+                println!("판정: ⚠ {:.0}°C 초과 — 쿨러가 부하를 못 따라감", limit);
+            } else {
+                println!("판정: ✓ {:.0}°C 이내 — 쿨러가 충분히 커버", limit);
+            }
+        }
+        None => println!("최고 온도: 측정 불가 (관리자 권한/보드 지원 필요)"),
+    }
+
+    if gflops.len() >= 2 {
+        let peak = gflops.iter().cloned().fold(f64::MIN, f64::max);
+        let min = gflops.iter().cloned().fold(f64::MAX, f64::min);
+        let ret = min / peak * 100.0;
+        println!("성능: peak {:.0} · min {:.0} GFLOPS (유지율 {:.0}%)", peak, min, ret);
+        println!(
+            "유지율 판정: {}",
+            if ret >= 90.0 {
+                "✓ 성능 안정 — 쓰로틀 거의 없음"
+            } else if ret >= 80.0 {
+                "△ 약간 하락 — 경미한 쓰로틀"
+            } else {
+                "⚠ 성능 하락 큼 — 쓰로틀(쿨러 부족) 의심"
+            }
+        );
+    }
+}
+
 fn run_workload_single<F: Fn() -> T, T>(f: F) -> Duration {
     let start = Instant::now();
     f();
@@ -217,10 +312,14 @@ pub fn run_cpu() {
     let multi_matmul_gflops = flops * cores as f64 / t.as_secs_f64() / 1e9;
     println!("Matrix multiply x{}: {:.2?}  ->  {:.2} GFLOPS  ({:.1}x scaling)", cores, t, multi_matmul_gflops, multi_matmul_gflops / single_matmul_gflops);
 
-    println!("\n-- Composite score (arbitrary, single-thread = 1000 baseline) --");
-    let base = single_prime_score + single_matmul_gflops;
-    println!("Single-core: 1000");
-    println!("Multi-core:  {:.0}", 1000.0 * (multi_prime_score + multi_matmul_gflops) / base);
+    // APEX 점수 — 레퍼런스(개발 머신)의 싱글 합성점수를 10000점으로 앵커.
+    // 다른 CPU 점수 = (그 CPU 합성점수 / REF) × 10000 → 내 PC 대비 상대 성능.
+    const REF_SINGLE: f64 = 380.0; // 태경 PC 싱글 합성(prime M ops/s + matmul GFLOPS) 기준
+    let single_composite = single_prime_score + single_matmul_gflops;
+    let multi_composite = multi_prime_score + multi_matmul_gflops;
+    println!("\n-- APEX score (내 PC = 싱글 10000 기준) --");
+    println!("Single-core: {:.0}", single_composite / REF_SINGLE * 10000.0);
+    println!("Multi-core:  {:.0}", multi_composite / REF_SINGLE * 10000.0);
 }
 
 pub fn run_gpu_monitor(seconds: u64) {

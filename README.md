@@ -38,6 +38,7 @@ the caller presents.**
 | Command | What it does |
 | --- | --- |
 | `velox info` | CPU / GPU / battery / temperature overview |
+| `velox snapshot [--json]` | One-shot system state (power plan / CPU / temp); `--json` emits machine-readable **engine data** |
 | `velox thermals [--watch]` | Real-time temperature polling |
 | `velox gpu status` | GPU usage / VRAM / temp (via `nvidia-smi`, WMI fallback) |
 | `velox bench cpu\|stability\|everyday\|gpu\|all` | CPU score, **sustained/throttle test** (retention %), everyday workload, GPU monitor |

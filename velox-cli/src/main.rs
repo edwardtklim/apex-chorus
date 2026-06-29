@@ -4,6 +4,7 @@ mod gpu;
 mod bench;
 mod fps;
 mod diagnose;
+mod snapshot;
 mod checkpoint;
 mod daemon;
 mod dashboard;
@@ -75,6 +76,11 @@ enum Commands {
         #[arg(long)]
         analyze: bool,
     },
+    /// 현재 시스템 상태 스냅샷 — 전원/CPU/온도. --json이면 기계용 JSON 출력
+    Snapshot {
+        #[arg(long)]
+        json: bool,
+    },
     /// 정상 상태 저장/복원 (블루스크린·AI 오판 후 되돌리기)
     Checkpoint {
         #[command(subcommand)]
@@ -115,6 +121,13 @@ enum BenchCommands {
     Stability {
         #[arg(long, default_value_t = 15)]
         seconds: u64,
+    },
+    /// 쿨러 부하 테스트 — N초간 전코어 부하 → 온도가 임계(°C)를 넘는지 판정 (기본 5분/85°C)
+    Thermal {
+        #[arg(long, default_value_t = 300)]
+        seconds: u64,
+        #[arg(long, default_value_t = 85.0)]
+        limit: f32,
     },
     /// Run all benchmarks in sequence
     All {
@@ -200,6 +213,7 @@ async fn main() {
             BenchCommands::Gpu { seconds } => bench::run_gpu_monitor(seconds),
             BenchCommands::Everyday => bench::run_everyday(),
             BenchCommands::Stability { seconds } => bench::run_stability(seconds),
+            BenchCommands::Thermal { seconds, limit } => bench::run_thermal(seconds, limit),
             BenchCommands::All { gpu_seconds } => {
                 bench::run_cpu();
                 println!();
@@ -224,6 +238,7 @@ async fn main() {
                 drivers::run()
             }
         }
+        Commands::Snapshot { json } => snapshot::run(json),
         Commands::Checkpoint { action } => match action {
             CheckpointCommands::Save => checkpoint::save(),
             CheckpointCommands::List => checkpoint::list(),

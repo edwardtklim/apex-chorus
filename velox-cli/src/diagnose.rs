@@ -11,20 +11,9 @@
 
 use serde::Deserialize;
 use std::io::{self, Write};
-use std::process::Command;
-use sysinfo::System;
-use wmi::{COMLibrary, WMIConnection};
 
 const TEMP_WARN_C: f32 = 85.0;
 const LOG_FILE: &str = "velox_actions.log";
-
-
-#[derive(Deserialize)]
-#[serde(rename = "MSAcpi_ThermalZoneTemperature")]
-struct ThermalZone {
-    #[serde(rename = "CurrentTemperature")]
-    current_temperature: u32,
-}
 
 struct Snapshot {
     max_temp_c: Option<f32>,
@@ -81,69 +70,28 @@ struct Pipeline {
     confirmed: bool,
 }
 
-// ---------------- [1] 읽기 ----------------
-
-fn read_active_plan() -> (String, String) {
-    if let Ok(out) = Command::new("powercfg").arg("/getactivescheme").output() {
-        let s = velox_core::util::decode_console(&out.stdout);
-        let guid = s
-            .split("GUID:")
-            .nth(1)
-            .and_then(|t| t.trim().split_whitespace().next())
-            .unwrap_or("")
-            .to_string();
-        let label = s
-            .split('(')
-            .nth(1)
-            .and_then(|t| t.split(')').next())
-            .unwrap_or("Unknown")
-            .trim()
-            .to_string();
-        return (guid, label);
-    }
-    (String::new(), "Unknown".to_string())
-}
-
-fn read_max_temp() -> Option<f32> {
-    let com = COMLibrary::new().ok()?;
-    let wmi = WMIConnection::with_namespace_path("ROOT\\WMI", com).ok()?;
-    let temps: Vec<ThermalZone> = wmi.query().unwrap_or_default();
-    temps
-        .iter()
-        .map(|t| (t.current_temperature as f32 / 10.0) - 273.15)
-        .fold(None, |acc, c| Some(acc.map_or(c, |m: f32| m.max(c))))
-}
-
-fn read_cpu_usage() -> f32 {
-    // 정확한 사용률은 두 번 샘플링이 필요 (sysinfo)
-    let mut sys = System::new();
-    sys.refresh_cpu();
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    sys.refresh_cpu();
-    sys.global_cpu_info().cpu_usage()
-}
+// ---------------- [1] 읽기 (엔진: velox_core::snapshot) ----------------
 
 fn collect() -> Snapshot {
-    let (plan_guid, plan_label) = read_active_plan();
-    let max_temp_c = read_max_temp();
-    let cpu_usage = read_cpu_usage();
-    let temp_str = match max_temp_c {
+    // 데이터 읽기는 엔진(core)에 위임. CLI는 AI용 summary만 조립한다.
+    let core = velox_core::snapshot::Snapshot::collect();
+    let temp_str = match core.max_temp_c {
         Some(c) => format!("{:.1}°C", c),
         None => "N/A (센서 읽기 실패 — 관리자 권한 필요)".to_string(),
     };
     let summary = format!(
         "- 현재 전원 모드: {} ({})\n- CPU 사용률: {:.0}%\n- 최고 온도: {}\n{}",
-        plan_label,
-        plan_guid,
-        cpu_usage,
+        core.plan_label,
+        core.plan_guid,
+        core.cpu_usage,
         temp_str,
         crate::drivers::problem_summary()
     );
     Snapshot {
-        max_temp_c,
-        cpu_usage,
-        plan_guid,
-        plan_label,
+        max_temp_c: core.max_temp_c,
+        cpu_usage: core.cpu_usage,
+        plan_guid: core.plan_guid,
+        plan_label: core.plan_label,
         summary,
     }
 }
@@ -269,7 +217,7 @@ fn execute_with_safety(label: &str, guid: &str, rollback_guid: &str) {
         println!("✗ 실행 실패 (권한/모드 부재).");
         return;
     }
-    let (new_guid, new_label) = read_active_plan();
+    let (new_guid, new_label) = velox_core::snapshot::active_power_plan();
     let verified = new_guid.to_lowercase() == guid.to_lowercase();
     println!(
         "검증: 현재 전원 모드 = {} {}",
@@ -386,8 +334,8 @@ pub async fn run(fix: bool, simulate_hot: bool) {
 
 /// 가벼운 상태 읽기 (heartbeat 문자열, 과열 여부). 매 틱 호출되므로 무거운 작업 제외.
 pub fn quick_status() -> (String, bool) {
-    let (_, plan_label) = read_active_plan();
-    let temp = read_max_temp();
+    let (_, plan_label) = velox_core::snapshot::active_power_plan();
+    let temp = velox_core::snapshot::max_temp_c();
     let hot = temp.map_or(false, |t| t >= TEMP_WARN_C);
     let temp_s = temp
         .map(|c| format!("{:.1}°C", c))

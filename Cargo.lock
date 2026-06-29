@@ -2392,6 +2392,7 @@ dependencies = [
  "serde_json",
  "sysinfo",
  "tokio",
+ "wmi",
 ]
 
 [[package]]
