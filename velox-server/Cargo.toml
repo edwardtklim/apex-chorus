@@ -1,0 +1,12 @@
+[package]
+name = "velox-server"
+version = "0.1.0"
+edition = "2024"
+
+# APEX Velox의 HTTP 얼굴 — velox-core 엔진을 읽기 전용 REST로 노출.
+# core=엔진 · velox-cli=터미널 · velox-server=HTTP (같은 엔진, 세 얼굴)
+
+[dependencies]
+velox-core = { path = "../velox-core" }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }

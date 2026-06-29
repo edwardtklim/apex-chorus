@@ -5,6 +5,7 @@ mod bench;
 mod fps;
 mod diagnose;
 mod snapshot;
+mod compare;
 mod checkpoint;
 mod daemon;
 mod dashboard;
@@ -76,10 +77,18 @@ enum Commands {
         #[arg(long)]
         analyze: bool,
     },
-    /// 현재 시스템 상태 스냅샷 — 전원/CPU/온도. --json이면 기계용 JSON 출력
+    /// 현재 시스템 스냅샷 — 시스템/GPU/드라이버/전원/온도. --json 기계용 · --out 파일저장
     Snapshot {
         #[arg(long)]
         json: bool,
+        /// 스냅샷을 JSON 파일로 저장 (나중에 `velox compare`로 비교)
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// 두 스냅샷(JSON 파일) 비교 — 드라이버/하드웨어 등 구조 변화만 (순간값 무시)
+    Compare {
+        old: String,
+        new: String,
     },
     /// 정상 상태 저장/복원 (블루스크린·AI 오판 후 되돌리기)
     Checkpoint {
@@ -238,7 +247,8 @@ async fn main() {
                 drivers::run()
             }
         }
-        Commands::Snapshot { json } => snapshot::run(json),
+        Commands::Snapshot { json, out } => snapshot::run(json, out),
+        Commands::Compare { old, new } => compare::run(old, new),
         Commands::Checkpoint { action } => match action {
             CheckpointCommands::Save => checkpoint::save(),
             CheckpointCommands::List => checkpoint::list(),
