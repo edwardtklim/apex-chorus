@@ -22,10 +22,9 @@ pub fn to_celsius(raw: u32) -> f32 {
     (raw as f32 / 10.0) - 273.15
 }
 
-fn connect() -> WMIConnection {
-    let com = COMLibrary::new().expect("COM init failed");
-    WMIConnection::with_namespace_path("ROOT\\WMI", com)
-        .expect("WMI ROOT\\WMI connection failed (try running as Administrator)")
+fn connect() -> Option<WMIConnection> {
+    let com = COMLibrary::new().ok()?;
+    WMIConnection::with_namespace_path("ROOT\\WMI", com).ok()
 }
 
 fn format_line(zones: &[ThermalZone]) -> String {
@@ -44,13 +43,19 @@ fn format_line(zones: &[ThermalZone]) -> String {
 }
 
 pub fn run_once() {
-    let wmi = connect();
+    let Some(wmi) = connect() else {
+        println!("온도 센서 접근 불가 — 관리자 권한으로 실행해 보세요.");
+        return;
+    };
     let zones = get_thermals(&wmi);
     println!("{}", format_line(&zones));
 }
 
 pub fn run_watch(interval_ms: u64) {
-    let wmi = connect();
+    let Some(wmi) = connect() else {
+        println!("온도 센서 접근 불가 — 관리자 권한으로 실행해 보세요.");
+        return;
+    };
     println!("Polling every {}ms — press Ctrl+C to stop\n", interval_ms);
     loop {
         let zones = get_thermals(&wmi);

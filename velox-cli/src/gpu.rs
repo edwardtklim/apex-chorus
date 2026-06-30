@@ -57,9 +57,19 @@ pub fn run_status() {
     }
 
     println!("nvidia-smi not available — falling back to WMI (name only, no live usage)\n");
-    let com = COMLibrary::new().expect("COM init failed");
-    let wmi = WMIConnection::new(com).expect("WMI connection failed");
-    for gpu in get_gpu_info(&wmi) {
+    let Ok(com) = COMLibrary::new() else {
+        println!("GPU 정보 조회 실패 (WMI 접근 불가).");
+        return;
+    };
+    let Ok(wmi) = WMIConnection::new(com) else {
+        println!("GPU 정보 조회 실패 (WMI 연결 불가).");
+        return;
+    };
+    let gpus = get_gpu_info(&wmi);
+    if gpus.is_empty() {
+        println!("GPU 정보 없음.");
+    }
+    for gpu in gpus {
         println!("GPU: {}", gpu.name);
         if let Some(ram) = gpu.adapter_ram {
             println!("VRAM (total): {} MiB", ram / 1024 / 1024);

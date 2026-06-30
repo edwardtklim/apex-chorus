@@ -437,7 +437,7 @@ pub async fn bench(hard: bool) {
 
     let np = prompts.len().max(1);
     let avg_score = |r: &Row| r.cat_scores.iter().sum::<f64>() / np as f64;
-    rows.sort_by(|a, b| avg_score(b).partial_cmp(&avg_score(a)).unwrap());
+    rows.sort_by(|a, b| avg_score(b).partial_cmp(&avg_score(a)).unwrap_or(std::cmp::Ordering::Equal));
 
     println!("\n=== 리더보드 (다중 심판 평균) ===");
     println!("{:<12}{:>10}{:>9}{:>11}{:>9}", "모델", "점수/1000", "속도ms", "처리량c/s", "크기");

@@ -321,10 +321,19 @@ fn run_info() {
 
     println!("=== APEX Velox — velox info ===\n");
 
-    let com = COMLibrary::new().expect("COM init failed");
-    let wmi = WMIConnection::new(com.clone()).expect("WMI connection failed");
+    let Ok(com) = COMLibrary::new() else {
+        println!("시스템 정보 조회 실패: COM 초기화 불가.");
+        return;
+    };
+    let Ok(wmi) = WMIConnection::new(com.clone()) else {
+        println!("시스템 정보 조회 실패: WMI 연결 불가.");
+        return;
+    };
 
-    let cpus: Vec<Processor> = wmi.query().expect("CPU query failed");
+    let cpus: Vec<Processor> = wmi.query().unwrap_or_default();
+    if cpus.is_empty() {
+        println!("CPU:    조회 실패");
+    }
     for cpu in &cpus {
         println!("CPU:    {}", cpu.name);
         println!("Cores:  {}", cpu.number_of_cores);
@@ -332,14 +341,17 @@ fn run_info() {
 
     println!();
 
-    let gpus: Vec<GPU> = wmi.query().expect("GPU query failed");
+    let gpus: Vec<GPU> = wmi.query().unwrap_or_default();
+    if gpus.is_empty() {
+        println!("GPU:    조회 실패 또는 없음");
+    }
     for gpu in &gpus {
         println!("GPU:    {}", gpu.name);
     }
 
     println!();
 
-    let batteries: Vec<Battery> = wmi.query().expect("Battery query failed");
+    let batteries: Vec<Battery> = wmi.query().unwrap_or_default();
     if batteries.is_empty() {
         println!("Battery: No battery detected");
     } else {
@@ -350,17 +362,19 @@ fn run_info() {
 
     println!();
     println!("--- Temperatures ---");
-    let wmi2 = WMIConnection::with_namespace_path("ROOT\\WMI", com)
-        .expect("WMI ROOT\\WMI failed");
-
-    let temps: Vec<ThermalZone> = wmi2.query().unwrap_or_default();
-    if temps.is_empty() {
-        println!("Temperature: Run as Administrator for sensor data");
-    } else {
-        for t in &temps {
-            let celsius = (t.current_temperature as f32 / 10.0) - 273.15;
-            println!("{}: {:.1}°C", t.instance_name, celsius);
+    match WMIConnection::with_namespace_path("ROOT\\WMI", com) {
+        Ok(wmi2) => {
+            let temps: Vec<ThermalZone> = wmi2.query().unwrap_or_default();
+            if temps.is_empty() {
+                println!("Temperature: Run as Administrator for sensor data");
+            } else {
+                for t in &temps {
+                    let celsius = (t.current_temperature as f32 / 10.0) - 273.15;
+                    println!("{}: {:.1}°C", t.instance_name, celsius);
+                }
+            }
         }
+        Err(_) => println!("Temperature: 센서 접근 불가 (관리자 권한 필요)"),
     }
 
     println!("\n=== velox info complete ===");

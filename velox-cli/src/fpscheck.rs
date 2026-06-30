@@ -99,7 +99,7 @@ pub async fn run(seconds: u64) {
 
     // 게임 pid의 타임스탬프 → 프레임 간격 → 순간 fps 분포
     let mut ts: Vec<f64> = evs.iter().filter(|(p, _)| *p == gpid).map(|(_, t)| *t).collect();
-    ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let avg_fps = gcount as f64 / seconds as f64;
     let mut inst: Vec<f64> = ts
@@ -109,7 +109,7 @@ pub async fn run(seconds: u64) {
             (dt > 0.0).then(|| 1.0 / dt)
         })
         .collect();
-    inst.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    inst.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let min_fps = inst.first().cloned().unwrap_or(0.0);
     let max_fps = inst.last().cloned().unwrap_or(0.0);
