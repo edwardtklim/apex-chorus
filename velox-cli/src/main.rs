@@ -20,7 +20,14 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "velox")]
-#[command(about = "APEX Velox — system monitor and AI orchestrator")]
+#[command(version)]
+#[command(about = "APEX Velox — Windows 시스템 진단 + 멀티 AI 오케스트레이터 CLI")]
+#[command(long_about = "APEX Velox — 시스템을 읽고(성능·온도·드라이버·스냅샷) AI가 안전하게 진단/조치하는 Windows CLI.\n\n\
+키 없이 동작: info · snapshot · compare · bench · gpu · thermals · drivers · timeline\n\
+API 키 필요: doctor · diagnose · chorus  (설정: velox chorus set <provider> <key>)\n\
+일부 센서/ETW 기능은 관리자 권한이 필요합니다.")]
+#[command(propagate_version = true)]
+#[command(arg_required_else_help = true)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -28,21 +35,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// CPU·GPU·배터리·온도 한눈에 (기본 시스템 정보)
     Info,
+    /// 온도 실시간 폴링 — --watch면 계속 갱신 (관리자 권장)
     Thermals {
         #[arg(long)]
         watch: bool,
         #[arg(long, default_value_t = 1000)]
         interval: u64,
     },
+    /// GPU 사용률·VRAM·온도 (nvidia-smi, 없으면 WMI 폴백)
     Gpu {
         #[command(subcommand)]
         action: GpuCommands,
     },
+    /// CPU 벤치(싱글 10000 기준)·stability·thermal(쿨러)·gpu 모니터
     Bench {
         #[command(subcommand)]
         action: BenchCommands,
     },
+    /// 프로세스별 프레임 감지 (ETW/DXGI, 관리자 필요)
     Fps {
         #[arg(long, default_value_t = 5)]
         seconds: u64,
@@ -104,6 +116,7 @@ enum Commands {
         #[arg(long)]
         auto: bool,
     },
+    /// 멀티 AI — 의미기반 라우팅·키 설정·모델 벤치·합의 (API 키 필요)
     Chorus {
         #[command(subcommand)]
         action: ChorusCommands,

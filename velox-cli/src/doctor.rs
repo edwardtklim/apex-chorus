@@ -175,6 +175,8 @@ pub async fn run() {
     );
     match velox_core::ai::query_text_with("claude", &prompt).await {
         Some(t) => println!("{}", t.trim()),
-        None => println!("(AI 호출 실패 — API 키 확인)"),
+        None => println!(
+            "(AI 진단 건너뜀 — API 키 없음/호출 실패. 'velox chorus set claude <key>'로 키를 넣으면 종합 진단을 받습니다. 위 [1] 시스템 스캔은 키 없이도 동작합니다.)"
+        ),
     }
 }
