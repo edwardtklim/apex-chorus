@@ -23,7 +23,9 @@ async fn main() {
         .route("/", get(index))
         .route("/health", get(health))
         .route("/snapshot", get(snapshot))
-        .route("/keys", post(save_keys));
+        .route("/keys", post(save_keys))
+        .route("/doctor", get(doctor))
+        .route("/diagnose", get(diagnose));
 
     let listener = tokio::net::TcpListener::bind(ADDR)
         .await
@@ -74,6 +76,49 @@ async fn save_keys(Json(k): Json<Keys>) -> Json<serde_json::Value> {
 
     let saved = upsert_env(&pairs);
     Json(serde_json::json!({ "saved": saved }))
+}
+
+/// velox CLI 실행 파일 경로 (같은 폴더의 velox.exe 우선, 없으면 PATH의 velox).
+fn velox_bin() -> std::path::PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let cand = dir.join("velox.exe");
+            if cand.exists() {
+                return cand;
+            }
+        }
+    }
+    std::path::PathBuf::from("velox")
+}
+
+/// velox CLI를 subprocess로 실행하고 출력(텍스트)을 돌려준다.
+fn run_velox(args: &[&str]) -> String {
+    match std::process::Command::new(velox_bin()).args(args).output() {
+        Ok(o) => {
+            let mut s = velox_core::util::decode_console(&o.stdout);
+            let err = velox_core::util::decode_console(&o.stderr);
+            if !err.trim().is_empty() {
+                s.push('\n');
+                s.push_str(&err);
+            }
+            s
+        }
+        Err(e) => format!("velox 실행 실패: {e}"),
+    }
+}
+
+/// AI 종합 진단 (읽기 전용 + AI). 시스템을 바꾸지 않는다.
+async fn doctor() -> String {
+    tokio::task::spawn_blocking(|| run_velox(&["doctor"]))
+        .await
+        .unwrap_or_else(|_| "doctor 태스크 실패".into())
+}
+
+/// 3단계 AI 안전 진단 — **--simulate-hot(제안만·실행 X)**. 실제 조치는 HTTP로 열지 않는다.
+async fn diagnose() -> String {
+    tokio::task::spawn_blocking(|| run_velox(&["diagnose", "--simulate-hot"]))
+        .await
+        .unwrap_or_else(|_| "diagnose 태스크 실패".into())
 }
 
 /// `.env`(gitignore됨)의 `KEY=값` 줄을 upsert — 기존 다른 키는 보존한다.

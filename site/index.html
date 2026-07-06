@@ -130,6 +130,19 @@
   <div class="live" id="live"></div>
 </div></section>
 
+<section id="run-sec"><div class="wrap center reveal">
+  <h2>Run it</h2>
+  <p class="sub">Connected — run real diagnostics right here. Read-only and dry-run only.</p>
+  <div id="run-app" style="display:none">
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+      <button class="btn" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('doctor','doctor · AI 진단 (키·수초 필요)')">Run doctor</button>
+      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('diagnose','diagnose · 3단계 AI 제안 (실행 X)')">Diagnose · simulate</button>
+    </div>
+    <pre id="run-out" style="text-align:left;margin-top:26px;display:none;white-space:pre-wrap;max-height:380px">…</pre>
+  </div>
+  <div id="run-locked" class="locked">Download and run the local app to run live diagnostics.</div>
+</div></section>
+
 <section id="reads"><div class="wrap center reveal">
   <h2>What it reads</h2>
   <p class="sub">Everything measured on your machine. Nothing estimated remotely.</p>
@@ -242,6 +255,8 @@
       '<div class="lg"><h4>Velox reads locally</h4><div class="lr"><span>Drivers</span><b>all versions</b></div><div class="lr"><span>Thermals</span><b>CPU / GPU</b></div><div class="lr"><span>Power</span><b>live usage</b></div><div class="lr"><span>AI</span><b>diagnosis + safe action</b></div></div>';
     document.getElementById('keys-app').style.display='none';
     document.getElementById('keys-locked').style.display='block';
+    document.getElementById('run-app').style.display='none';
+    document.getElementById('run-locked').style.display='block';
   }
   function appMode(s){
     document.getElementById('mode-eyebrow').textContent='APEX Velox · connected';
@@ -251,6 +266,8 @@
     render(s);
     document.getElementById('keys-locked').style.display='none';
     document.getElementById('keys-app').style.display='block';
+    document.getElementById('run-locked').style.display='none';
+    document.getElementById('run-app').style.display='block';
     setInterval(function(){fetch('/snapshot').then(function(r){return r.json();}).then(render).catch(function(){});},3000);
   }
   function render(s){
@@ -275,6 +292,12 @@ function saveKeys(){
     .then(function(r){return r.json();})
     .then(function(res){ st.textContent='✓ '+res.saved+' key(s) saved to .env (local · gitignored)'; ['k-claude','k-gpt','k-gemini','k-grok'].forEach(function(i){g(i).value='';}); })
     .catch(function(){ st.textContent='저장 실패 — 로컬 앱 모드에서만 가능합니다.'; });
+}
+function runCmd(cmd,label){
+  var out=document.getElementById('run-out');
+  out.style.display='block';
+  out.textContent='Running '+label+' …';
+  fetch('/'+cmd).then(function(r){return r.text();}).then(function(t){out.textContent=t;}).catch(function(){out.textContent='실행 실패 — 로컬 앱 모드에서만 가능합니다.';});
 }
 </script>
 </body>
