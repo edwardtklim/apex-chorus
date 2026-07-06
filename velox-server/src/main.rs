@@ -7,7 +7,9 @@
 //! 안전 원칙: 읽기 전용만 · localhost(127.0.0.1) 바인딩만.
 
 use axum::response::Html;
-use axum::{routing::get, Json, Router};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde::Deserialize;
 use velox_core::snapshot::Snapshot;
 
 const ADDR: &str = "127.0.0.1:7878";
@@ -20,7 +22,8 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
-        .route("/snapshot", get(snapshot));
+        .route("/snapshot", get(snapshot))
+        .route("/keys", post(save_keys));
 
     let listener = tokio::net::TcpListener::bind(ADDR)
         .await
@@ -45,4 +48,51 @@ async fn snapshot() -> Json<Snapshot> {
         .await
         .expect("snapshot 태스크 패닉");
     Json(snap)
+}
+
+/// 브라우저에서 넘어온 API 키. (앱 모드에서만 호출됨)
+#[derive(Deserialize)]
+struct Keys {
+    claude: Option<String>,
+    gpt: Option<String>,
+    gemini: Option<String>,
+    grok: Option<String>,
+}
+
+/// API 키를 로컬 `.env`에 저장한다. **설정(자격증명) 쓰기**이지 시스템 조치가 아니며,
+/// localhost 전용이다. diagnose 같은 *시스템 변경* 액션은 여전히 HTTP로 열지 않는다.
+async fn save_keys(Json(k): Json<Keys>) -> Json<serde_json::Value> {
+    let pairs: Vec<(&str, String)> = [
+        ("ANTHROPIC_API_KEY", k.claude),
+        ("OPENAI_API_KEY", k.gpt),
+        ("GEMINI_API_KEY", k.gemini),
+        ("GROK_API_KEY", k.grok),
+    ]
+    .into_iter()
+    .filter_map(|(name, v)| v.filter(|s| !s.trim().is_empty()).map(|s| (name, s)))
+    .collect();
+
+    let saved = upsert_env(&pairs);
+    Json(serde_json::json!({ "saved": saved }))
+}
+
+/// `.env`(gitignore됨)의 `KEY=값` 줄을 upsert — 기존 다른 키는 보존한다.
+fn upsert_env(pairs: &[(&str, String)]) -> usize {
+    if pairs.is_empty() {
+        return 0;
+    }
+    let path = ".env";
+    let mut lines: Vec<String> = std::fs::read_to_string(path)
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_default();
+    for (name, val) in pairs {
+        let prefix = format!("{name}=");
+        let entry = format!("{name}={val}");
+        match lines.iter_mut().find(|l| l.trim_start().starts_with(&prefix)) {
+            Some(l) => *l = entry,
+            None => lines.push(entry),
+        }
+    }
+    let _ = std::fs::write(path, lines.join("\n") + "\n");
+    pairs.len()
 }

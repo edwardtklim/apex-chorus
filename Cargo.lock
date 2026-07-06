@@ -2492,6 +2492,8 @@ name = "velox-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "serde",
+ "serde_json",
  "tokio",
  "velox-core",
 ]

@@ -265,10 +265,16 @@
   fetch('/snapshot',{signal:ctrl.signal}).then(function(r){return r.json();}).then(appMode).catch(siteMode);
 })();
 function saveKeys(){
-  var k={claude:k_claude.value,gpt:k_gpt.value,gemini:k_gemini.value,grok:k_grok.value};
-  try{localStorage.setItem('apex_keys_present',JSON.stringify(Object.keys(k).filter(function(p){return k[p];})));}catch(e){}
-  var n=Object.values(k).filter(Boolean).length;
-  document.getElementById('keys-status').textContent=n?('✓ '+n+' key(s) confirmed (prototype — wiring to engine next)'):'Enter at least one key.';
+  var g=function(id){return document.getElementById(id);};
+  var body={claude:g('k-claude').value,gpt:g('k-gpt').value,gemini:g('k-gemini').value,grok:g('k-grok').value};
+  var st=g('keys-status');
+  var n=Object.keys(body).filter(function(p){return body[p]&&body[p].trim();}).length;
+  if(!n){ st.textContent='Enter at least one key.'; return; }
+  st.textContent='Saving…';
+  fetch('/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json();})
+    .then(function(res){ st.textContent='✓ '+res.saved+' key(s) saved to .env (local · gitignored)'; ['k-claude','k-gpt','k-gemini','k-grok'].forEach(function(i){g(i).value='';}); })
+    .catch(function(){ st.textContent='저장 실패 — 로컬 앱 모드에서만 가능합니다.'; });
 }
 </script>
 </body>
