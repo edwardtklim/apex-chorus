@@ -24,6 +24,7 @@ async fn main() {
         .route("/health", get(health))
         .route("/snapshot", get(snapshot))
         .route("/keys", post(save_keys))
+        .route("/keys/status", get(keys_status))
         .route("/doctor", get(doctor))
         .route("/diagnose", get(diagnose));
 
@@ -76,6 +77,29 @@ async fn save_keys(Json(k): Json<Keys>) -> Json<serde_json::Value> {
 
     let saved = upsert_env(&pairs);
     Json(serde_json::json!({ "saved": saved }))
+}
+
+/// 어떤 키가 설정됐는지만 반환 (값은 절대 노출 안 함).
+async fn keys_status() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "claude": env_has("ANTHROPIC_API_KEY"),
+        "gpt": env_has("OPENAI_API_KEY"),
+        "gemini": env_has("GEMINI_API_KEY"),
+        "grok": env_has("GROK_API_KEY"),
+    }))
+}
+
+/// `.env`에 `NAME=<비어있지 않은 값>` 줄이 있는지.
+fn env_has(name: &str) -> bool {
+    std::fs::read_to_string(".env")
+        .map(|s| {
+            s.lines().any(|l| {
+                let l = l.trim_start();
+                l.starts_with(&format!("{name}="))
+                    && l.splitn(2, '=').nth(1).map_or(false, |v| !v.trim().is_empty())
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// velox CLI 실행 파일 경로 (같은 폴더의 velox.exe 우선, 없으면 PATH의 velox).

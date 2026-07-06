@@ -93,6 +93,13 @@
   .keys .save:hover{opacity:.85;}
   .keys .status{font-size:13px; color:var(--muted); margin-top:12px; text-align:center; min-height:18px;}
   .locked{font-size:14px; color:var(--muted); text-align:center; max-width:420px; margin:0 auto;}
+  #run-app button:disabled{opacity:.45; cursor:default;}
+  .out-wrap{position:relative; margin-top:26px; text-align:left;}
+  .out-wrap .copy{position:absolute; top:10px; right:12px; font-size:12px; color:var(--muted); background:transparent; border:0; cursor:pointer;}
+  .out-wrap .copy:hover{color:var(--fg);}
+  #run-out{margin:0; max-height:400px; overflow:auto; white-space:pre-wrap;}
+  @keyframes pulse{0%,100%{opacity:1} 50%{opacity:.25}}
+  .fetching .dot{animation:pulse 1s infinite;}
 
   footer{padding:56px 0; color:var(--muted); font-size:13px; text-align:center;}
   footer a{text-decoration:underline;}
@@ -138,7 +145,10 @@
       <button class="btn" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('doctor','doctor · AI 진단 (키·수초 필요)')">Run doctor</button>
       <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('diagnose','diagnose · 3단계 AI 제안 (실행 X)')">Diagnose · simulate</button>
     </div>
-    <pre id="run-out" style="text-align:left;margin-top:26px;display:none;white-space:pre-wrap;max-height:380px">…</pre>
+    <div class="out-wrap" id="out-wrap" style="display:none">
+      <button class="copy" onclick="copyOut()">Copy</button>
+      <pre id="run-out"></pre>
+    </div>
   </div>
   <div id="run-locked" class="locked">Download and run the local app to run live diagnostics.</div>
 </div></section>
@@ -268,7 +278,18 @@
     document.getElementById('keys-app').style.display='block';
     document.getElementById('run-locked').style.display='none';
     document.getElementById('run-app').style.display='block';
-    setInterval(function(){fetch('/snapshot').then(function(r){return r.json();}).then(render).catch(function(){});},3000);
+    refreshKeyStatus();
+    setInterval(function(){
+      document.body.classList.add('fetching');
+      fetch('/snapshot').then(function(r){return r.json();}).then(function(x){
+        document.body.classList.remove('fetching');
+        document.getElementById('ts').textContent='updated '+new Date().toLocaleTimeString();
+        render(x);
+      }).catch(function(){
+        document.body.classList.remove('fetching');
+        document.getElementById('ts').textContent='reconnecting…';
+      });
+    },3000);
   }
   function render(s){
     var gpus=(s.gpus||[]).map(function(g){return '<div class="lr"><span>'+g.name+'</span><b>v'+g.driver_version+'</b></div>';}).join('')||'<span style="color:var(--muted)">—</span>';
@@ -290,14 +311,31 @@ function saveKeys(){
   st.textContent='Saving…';
   fetch('/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(function(r){return r.json();})
-    .then(function(res){ st.textContent='✓ '+res.saved+' key(s) saved to .env (local · gitignored)'; ['k-claude','k-gpt','k-gemini','k-grok'].forEach(function(i){g(i).value='';}); })
+    .then(function(res){ st.textContent='✓ '+res.saved+' key(s) saved to .env (local · gitignored)'; ['k-claude','k-gpt','k-gemini','k-grok'].forEach(function(i){g(i).value='';}); refreshKeyStatus(); })
     .catch(function(){ st.textContent='저장 실패 — 로컬 앱 모드에서만 가능합니다.'; });
 }
 function runCmd(cmd,label){
-  var out=document.getElementById('run-out');
-  out.style.display='block';
-  out.textContent='Running '+label+' …';
-  fetch('/'+cmd).then(function(r){return r.text();}).then(function(t){out.textContent=t;}).catch(function(){out.textContent='실행 실패 — 로컬 앱 모드에서만 가능합니다.';});
+  var out=document.getElementById('run-out'), wrap=document.getElementById('out-wrap');
+  var btns=document.querySelectorAll('#run-app button.btn');
+  btns.forEach(function(b){b.disabled=true;});
+  wrap.style.display='block';
+  var t0=Date.now();
+  var timer=setInterval(function(){ out.textContent='Running '+label+' … '+Math.round((Date.now()-t0)/1000)+'s'; },250);
+  fetch('/'+cmd).then(function(r){return r.text();})
+    .then(function(t){ clearInterval(timer); out.textContent=(t||'').trim()||'(빈 응답)'; })
+    .catch(function(){ clearInterval(timer); out.textContent='실행 실패 — 로컬 앱 모드(cargo run -p velox-server)에서만 가능합니다.'; })
+    .finally(function(){ btns.forEach(function(b){b.disabled=false;}); wrap.scrollIntoView({behavior:'smooth',block:'nearest'}); });
+}
+function copyOut(){
+  var t=document.getElementById('run-out').textContent;
+  if(navigator.clipboard) navigator.clipboard.writeText(t);
+  var b=document.querySelector('.out-wrap .copy'); if(b){ b.textContent='Copied'; setTimeout(function(){b.textContent='Copy';},1200); }
+}
+function refreshKeyStatus(){
+  fetch('/keys/status').then(function(r){return r.json();}).then(function(st){
+    var m={claude:'k-claude',gpt:'k-gpt',gemini:'k-gemini',grok:'k-grok'};
+    Object.keys(m).forEach(function(p){ var el=document.getElementById(m[p]); if(el&&st[p]) el.placeholder='•••••••• configured'; });
+  }).catch(function(){});
 }
 </script>
 </body>
