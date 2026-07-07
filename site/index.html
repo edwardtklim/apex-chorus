@@ -100,6 +100,13 @@
   #run-out{margin:0; max-height:400px; overflow:auto; white-space:pre-wrap;}
   @keyframes pulse{0%,100%{opacity:1} 50%{opacity:.25}}
   .fetching .dot{animation:pulse 1s infinite;}
+  #chat{max-width:640px;margin:24px auto 0;text-align:left;}
+  .bubble{border-radius:16px;padding:12px 16px;margin:12px 0;font-size:14px;line-height:1.65;white-space:pre-wrap;animation:rise .4s ease;}
+  .bubble .who{font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:500;}
+  .bubble.sys{background:var(--soft2);}
+  .bubble.ai{background:var(--soft);}
+  .bubble.done{background:transparent;color:var(--muted);font-size:13px;text-align:center;}
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 
   footer{padding:56px 0; color:var(--muted); font-size:13px; text-align:center;}
   footer a{text-decoration:underline;}
@@ -143,7 +150,7 @@
   <div id="run-app" style="display:none">
     <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
       <button class="btn" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('doctor','doctor · AI 진단 (키 필요)')">doctor</button>
-      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('diagnose','diagnose · AI 제안 (실행 X)')">diagnose</button>
+      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="diagnoseChat()">diagnose · live</button>
       <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('bench','bench · CPU 점수')">bench</button>
       <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('drivers','drivers · 스캔')">drivers</button>
       <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('gpu','gpu · 상태')">gpu</button>
@@ -154,6 +161,7 @@
       <button class="copy" onclick="copyOut()">Copy</button>
       <pre id="run-out"></pre>
     </div>
+    <div id="chat" style="display:none"></div>
   </div>
   <div id="run-locked" class="locked">Download and run the local app to run live diagnostics.</div>
 </div></section>
@@ -344,6 +352,28 @@ function refreshKeyStatus(){
     var m={claude:'k-claude',gpt:'k-gpt',gemini:'k-gemini',grok:'k-grok'};
     Object.keys(m).forEach(function(p){ var el=document.getElementById(m[p]); if(el&&st[p]) el.placeholder='•••••••• configured'; });
   }).catch(function(){});
+}
+function diagnoseChat(){
+  var chat=document.getElementById('chat');
+  document.getElementById('out-wrap').style.display='none';
+  chat.style.display='block'; chat.innerHTML='';
+  var btns=document.querySelectorAll('#run-app button.btn'); btns.forEach(function(b){b.disabled=true;});
+  var done=function(){ btns.forEach(function(b){b.disabled=false;}); };
+  var add=function(who,text,cls){
+    var b=document.createElement('div'); b.className='bubble '+cls;
+    var w=document.createElement('div'); w.className='who'; w.textContent=who;
+    var t=document.createElement('div'); t.textContent=text;
+    b.appendChild(w); b.appendChild(t); chat.appendChild(b);
+    b.scrollIntoView({behavior:'smooth',block:'nearest'});
+  };
+  add('진단 시작','3명의 AI를 소집합니다…','sys');
+  var es=new EventSource('/diagnose/stream');
+  es.onmessage=function(e){
+    var m; try{ m=JSON.parse(e.data); }catch(_){ return; }
+    if(m.who==='done'){ add('완료',m.text,'done'); es.close(); done(); return; }
+    add(m.who, m.text, m.who==='시스템'?'sys':'ai');
+  };
+  es.onerror=function(){ add('오류','스트림 연결 실패 — 로컬 앱 모드에서만 됩니다.','done'); es.close(); done(); };
 }
 </script>
 </body>

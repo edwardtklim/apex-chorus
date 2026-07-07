@@ -7,10 +7,13 @@
 //! 안전 원칙: 읽기 전용만 · localhost(127.0.0.1) 바인딩만.
 
 use axum::extract::Path;
+use axum::response::sse::{Event, Sse};
 use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
+use std::convert::Infallible;
+use tokio_stream::wrappers::ReceiverStream;
 use velox_core::snapshot::Snapshot;
 
 const ADDR: &str = "127.0.0.1:7878";
@@ -20,13 +23,15 @@ const INDEX_HTML: &str = include_str!("../../site/index.html");
 
 #[tokio::main]
 async fn main() {
+    dotenv::dotenv().ok(); // 저장된 API 키(.env)를 프로세스 env로 로드
     let app = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
         .route("/snapshot", get(snapshot))
         .route("/keys", post(save_keys))
         .route("/keys/status", get(keys_status))
-        .route("/run/:cmd", get(run_cmd));
+        .route("/run/:cmd", get(run_cmd))
+        .route("/diagnose/stream", get(diagnose_stream));
 
     let listener = tokio::net::TcpListener::bind(ADDR)
         .await
@@ -76,6 +81,10 @@ async fn save_keys(Json(k): Json<Keys>) -> Json<serde_json::Value> {
     .collect();
 
     let saved = upsert_env(&pairs);
+    // 현재 서버 프로세스 env에도 즉시 반영 → 방금 저장한 키로 바로 스트리밍 진단이 됨.
+    for (name, val) in &pairs {
+        unsafe { std::env::set_var(name, val) };
+    }
     Json(serde_json::json!({ "saved": saved }))
 }
 
@@ -100,6 +109,78 @@ fn env_has(name: &str) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+/// 3단계 AI 진단을 **실시간 스트리밍(SSE)**으로 보낸다 — UI가 채팅처럼 한 줄씩 보여준다.
+/// 읽기 전용 "대화"다(시스템을 바꾸지 않음). 데모용으로 95°C를 주입한다.
+async fn diagnose_stream() -> Sse<ReceiverStream<Result<Event, Infallible>>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(16);
+    tokio::spawn(async move {
+        fn ev(who: &str, text: &str) -> Result<Event, Infallible> {
+            Ok(Event::default()
+                .json_data(serde_json::json!({ "who": who, "text": text }))
+                .unwrap_or_else(|_| Event::default().data("")))
+        }
+
+        let snap = tokio::task::spawn_blocking(Snapshot::collect).await.ok();
+        let base = snap
+            .as_ref()
+            .map(summarize)
+            .unwrap_or_else(|| "스냅샷 읽기 실패".to_string());
+        let state = format!("{base}\n- 최고 온도: 95.0°C  [시뮬레이션]");
+        let _ = tx.send(ev("시스템", &format!("시스템을 읽었습니다.\n{state}"))).await;
+
+        let intent = velox_core::ai::query_text_with(
+            "claude",
+            &format!("다음 시스템 상태에서 사용자가 가장 걱정할 점을 한국어 한 줄로 요약:\n{state}"),
+        )
+        .await
+        .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
+        let _ = tx.send(ev("Customer · Claude", &intent)).await;
+
+        let eng = velox_core::ai::query_text_with(
+            "gpt",
+            &format!(
+                "너는 시스템 엔지니어 AI다. 안전하고 되돌릴 수 있는 조치를 한국어 한 줄로 제안하라(애매하면 '조치 없음').\n사용자 의도: {}\n상태:\n{state}",
+                intent.trim()
+            ),
+        )
+        .await
+        .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
+        let _ = tx.send(ev("Engineer · GPT", &eng)).await;
+
+        let conf = velox_core::ai::query_text_with(
+            "gemini",
+            &format!(
+                "너는 검수 AI다. 아래 제안이 안전하고 합리적이면 'APPROVE', 아니면 'REJECT'로 시작해 한국어 한 줄 이유.\n제안: {}",
+                eng.trim()
+            ),
+        )
+        .await
+        .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
+        let _ = tx.send(ev("Confirmer · Gemini", &conf)).await;
+
+        let _ = tx
+            .send(ev(
+                "done",
+                "진단 완료. 실제 조치는 CLI(velox diagnose --fix)에서 승인 후에만 실행됩니다.",
+            ))
+            .await;
+    });
+    Sse::new(ReceiverStream::new(rx))
+}
+
+/// 스냅샷을 짧은 요약 문자열로.
+fn summarize(s: &Snapshot) -> String {
+    format!(
+        "- CPU: {} ({}코어), 사용률 {:.0}%\n- RAM: {} MB\n- 전원 모드: {}\n- 설치 드라이버: {}개",
+        s.system.cpu_model,
+        s.system.logical_cores,
+        s.cpu_usage,
+        s.system.ram_total_mb,
+        s.plan_label,
+        s.drivers.len(),
+    )
 }
 
 /// velox CLI 실행 파일 경로 (같은 폴더의 velox.exe 우선, 없으면 PATH의 velox).
