@@ -10,6 +10,16 @@ use std::env;
 
 pub const PROVIDERS_FILE: &str = "velox_providers.json";
 
+/// 타임아웃이 걸린 HTTP 클라이언트 — provider가 느리거나 무응답이어도 무한 대기하지 않는다.
+/// (diagnose는 AI를 3번 연속 호출하므로 한 곳이 매달리면 전체가 멈춘다)
+fn http_client() -> Client {
+    Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
+
 /// provider 별칭 → .env 환경변수 이름.
 pub fn env_var_for(provider: &str) -> Option<&'static str> {
     match provider.to_lowercase().as_str() {
@@ -75,7 +85,7 @@ pub async fn route_semantic(prompt: &str) -> String {
 
 /// 특정 provider 호출, 텍스트 반환. diagnose 3단계 파이프라인·bench·consensus의 엔진.
 pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
-    let client = Client::new();
+    let client = http_client();
     match model {
         "gpt" => {
             let key = env::var("OPENAI_API_KEY").ok()?;
@@ -260,7 +270,7 @@ mod net_tests {
     #[tokio::test]
     async fn parses_openai_style_reply() {
         let base = spawn_mock(r#"{"choices":[{"message":{"content":"mocked reply"}}]}"#);
-        let client = Client::new();
+        let client = http_client();
         let got = query_openai_compatible(&client, &base, "test-model", "", "hi").await;
         assert_eq!(got, Some("mocked reply".to_string()));
     }
@@ -269,7 +279,7 @@ mod net_tests {
     async fn returns_none_on_unexpected_shape() {
         // 서버가 형식 다른 JSON을 줘도 패닉 없이 None.
         let base = spawn_mock(r#"{"error":"rate limited"}"#);
-        let client = Client::new();
+        let client = http_client();
         let got = query_openai_compatible(&client, &base, "test-model", "", "hi").await;
         assert_eq!(got, None);
     }
