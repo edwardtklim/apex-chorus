@@ -107,6 +107,7 @@
   .bubble.ai{background:var(--soft);}
   .bubble.done{background:transparent;color:var(--muted);font-size:13px;text-align:center;}
   @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  .dots{letter-spacing:3px;color:var(--muted);animation:pulse 1.2s infinite;}
 
   footer{padding:56px 0; color:var(--muted); font-size:13px; text-align:center;}
   footer a{text-decoration:underline;}
@@ -125,6 +126,27 @@
     <button class="toggle" id="tg" aria-label="theme">◑</button>
   </div>
 </div></nav>
+
+<div id="gate" style="position:fixed;inset:0;background:var(--bg);z-index:200;display:none;align-items:center;justify-content:center">
+  <div style="width:100%;max-width:380px;padding:24px;text-align:center">
+    <div id="login-view">
+      <h1 style="font-size:42px;margin:0 0 6px">환영합니다</h1>
+      <p class="lede" style="margin:0 0 26px">APEX Velox</p>
+      <input id="login-id" placeholder="아이디" autocomplete="off" style="width:100%;height:44px;padding:0 14px;border:0;border-radius:12px;background:var(--soft2);color:var(--fg);font-size:15px;margin-bottom:10px">
+      <input id="login-pw" type="password" placeholder="비밀번호" style="width:100%;height:44px;padding:0 14px;border:0;border-radius:12px;background:var(--soft2);color:var(--fg);font-size:15px">
+      <button onclick="doLogin()" style="width:100%;height:46px;border:0;border-radius:12px;background:var(--fg);color:var(--bg);font-size:15px;font-weight:500;cursor:pointer;margin-top:18px">로그인</button>
+      <div id="login-msg" style="font-size:13px;color:#e24b4a;margin-top:12px;min-height:18px"></div>
+      <p style="font-size:12px;color:var(--muted);margin-top:6px">에디터용 마스터키 — admin0108 / admin0108 (배포판에선 제거)</p>
+    </div>
+    <div id="name-view" style="display:none">
+      <h1 style="font-size:34px;margin:0 0 8px">이 PC의 이름은?</h1>
+      <p class="lede" style="margin:0 0 18px">감지된 스펙</p>
+      <div id="name-spec" style="text-align:left;background:var(--soft);border-radius:14px;padding:16px 18px;font-size:14px;color:var(--muted);white-space:pre-wrap;margin-bottom:20px">읽는 중…</div>
+      <input id="pc-name" placeholder="예: 태경-갤럭시북" style="width:100%;height:44px;padding:0 14px;border:0;border-radius:12px;background:var(--soft2);color:var(--fg);font-size:15px">
+      <button onclick="saveName()" style="width:100%;height:46px;border:0;border-radius:12px;background:var(--fg);color:var(--bg);font-size:15px;font-weight:500;cursor:pointer;margin-top:18px">저장하고 시작</button>
+    </div>
+  </div>
+</div>
 
 <section><div class="wrap center reveal">
   <p class="eyebrow" id="mode-eyebrow">APEX Velox</p>
@@ -162,6 +184,7 @@
       <pre id="run-out"></pre>
     </div>
     <div id="chat" style="display:none"></div>
+    <button id="diag-cancel" onclick="cancelDiag()" style="display:none;border:0;font-family:inherit;cursor:pointer;background:transparent;color:var(--accent);font-size:14px;margin-top:14px">진단 취소</button>
   </div>
   <div id="run-locked" class="locked">Download and run the local app to run live diagnostics.</div>
 </div></section>
@@ -294,6 +317,7 @@
     document.getElementById('update-locked').style.display='block';
   }
   function appMode(s){
+    if(!sessionStorage.getItem('apex_auth')){ document.getElementById('gate').style.display='flex'; }
     document.getElementById('mode-eyebrow').textContent='APEX Velox · connected';
     document.getElementById('live-badge').textContent='Live · local engine';
     document.getElementById('live-title').textContent='Your machine, live';
@@ -368,12 +392,16 @@ function refreshKeyStatus(){
     Object.keys(m).forEach(function(p){ var el=document.getElementById(m[p]); if(el&&st[p]) el.placeholder='•••••••• configured'; });
   }).catch(function(){});
 }
+var currentES=null;
 function diagnoseChat(){
   var chat=document.getElementById('chat');
   document.getElementById('out-wrap').style.display='none';
   chat.style.display='block'; chat.innerHTML='';
   var btns=document.querySelectorAll('#run-app button.btn'); btns.forEach(function(b){b.disabled=true;});
-  var done=function(){ btns.forEach(function(b){b.disabled=false;}); };
+  var cancel=document.getElementById('diag-cancel'); cancel.style.display='inline-flex';
+  var thinking=null;
+  var removeThinking=function(){ if(thinking){thinking.remove();thinking=null;} };
+  var finish=function(){ btns.forEach(function(b){b.disabled=false;}); cancel.style.display='none'; removeThinking(); currentES=null; };
   var add=function(who,text,cls){
     var b=document.createElement('div'); b.className='bubble '+cls;
     var w=document.createElement('div'); w.className='who'; w.textContent=who;
@@ -381,14 +409,33 @@ function diagnoseChat(){
     b.appendChild(w); b.appendChild(t); chat.appendChild(b);
     b.scrollIntoView({behavior:'smooth',block:'nearest'});
   };
+  var showThinking=function(label){
+    removeThinking();
+    thinking=document.createElement('div'); thinking.className='bubble ai';
+    thinking.innerHTML='<div class="who"></div><div class="dots">● ● ●</div>';
+    thinking.firstChild.textContent=label;
+    chat.appendChild(thinking); thinking.scrollIntoView({block:'nearest'});
+  };
+  var next={'시스템':'Customer · Claude 생각 중','Customer · Claude':'Engineer · GPT 생각 중','Engineer · GPT':'Confirmer · Gemini 검수 중'};
   add('진단 시작','3명의 AI를 소집합니다…','sys');
-  var es=new EventSource('/diagnose/stream');
+  showThinking('시스템 읽는 중');
+  var es=new EventSource('/diagnose/stream'); currentES=es;
   es.onmessage=function(e){
     var m; try{ m=JSON.parse(e.data); }catch(_){ return; }
-    if(m.who==='done'){ add('완료',m.text,'done'); es.close(); done(); return; }
+    removeThinking();
+    if(m.who==='done'){ add('완료',m.text,'done'); es.close(); finish(); return; }
     add(m.who, m.text, m.who==='시스템'?'sys':'ai');
+    if(next[m.who]) showThinking(next[m.who]);
   };
-  es.onerror=function(){ add('오류','스트림 연결 실패 — 로컬 앱 모드에서만 됩니다.','done'); es.close(); done(); };
+  es.onerror=function(){ removeThinking(); add('오류','스트림 연결 실패 — 로컬 앱 모드에서만 됩니다.','done'); es.close(); finish(); };
+}
+function cancelDiag(){
+  if(currentES){ currentES.close(); }
+  var chat=document.getElementById('chat');
+  var b=document.createElement('div'); b.className='bubble done'; b.textContent='취소됨 — 남은 AI 호출을 중단했습니다.'; chat.appendChild(b);
+  document.querySelectorAll('#run-app button.btn').forEach(function(x){x.disabled=false;});
+  document.getElementById('diag-cancel').style.display='none';
+  currentES=null;
 }
 function checkUpdate(){
   var st=document.getElementById('update-status'), link=document.getElementById('update-link');
@@ -403,6 +450,37 @@ function checkUpdate(){
       })
       .catch(function(){ st.textContent='현재 버전: v'+cur+' — 아직 공개 릴리스가 없거나 확인 실패'; });
   }).catch(function(){ st.textContent='버전 확인 실패'; });
+}
+function doLogin(){
+  var id=(document.getElementById('login-id').value||'').trim();
+  var pw=document.getElementById('login-pw').value||'';
+  if(id==='admin0108' && pw==='admin0108'){ sessionStorage.setItem('apex_auth','1'); afterLogin(); }
+  else { document.getElementById('login-msg').textContent='아이디 또는 비밀번호가 틀렸습니다.'; }
+}
+function afterLogin(){
+  fetch('/profile').then(function(r){return r.json();}).then(function(p){
+    if(p && p.pc_name){ closeGate(p.pc_name); return; }
+    document.getElementById('login-view').style.display='none';
+    document.getElementById('name-view').style.display='block';
+    fetch('/snapshot').then(function(r){return r.json();}).then(function(s){
+      document.getElementById('name-spec').textContent=
+        'CPU        '+s.system.cpu_model+' ('+s.system.logical_cores+'코어)\n'+
+        'RAM        '+s.system.ram_total_mb+' MB\n'+
+        'OS         '+s.system.os+'\n'+
+        'GPU        '+((s.gpus[0]&&s.gpus[0].name)||'—')+'\n'+
+        '드라이버   '+(s.drivers||[]).length+'개';
+    }).catch(function(){});
+  }).catch(function(){ closeGate(); });
+}
+function saveName(){
+  var name=(document.getElementById('pc-name').value||'').trim();
+  if(!name) return;
+  fetch('/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pc_name:name})})
+    .then(function(){ closeGate(name); }).catch(function(){ closeGate(name); });
+}
+function closeGate(name){
+  document.getElementById('gate').style.display='none';
+  if(name){ var eb=document.getElementById('mode-eyebrow'); if(eb) eb.textContent='APEX Velox · '+name; }
 }
 </script>
 </body>

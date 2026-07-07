@@ -11,13 +11,13 @@ use axum::response::sse::{Event, Sse};
 use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use tokio_stream::wrappers::ReceiverStream;
 use velox_core::snapshot::Snapshot;
 
 const ADDR: &str = "127.0.0.1:7878";
-const APP_VERSION: &str = "0.10.0";
+const APP_VERSION: &str = "0.11.0";
 
 /// 사이트와 앱이 공유하는 단일 UI 파일.
 const INDEX_HTML: &str = include_str!("../../site/index.html");
@@ -33,7 +33,8 @@ async fn main() {
         .route("/keys/status", get(keys_status))
         .route("/run/:cmd", get(run_cmd))
         .route("/diagnose/stream", get(diagnose_stream))
-        .route("/version", get(version));
+        .route("/version", get(version))
+        .route("/profile", get(get_profile).post(save_profile));
 
     let listener = tokio::net::TcpListener::bind(ADDR)
         .await
@@ -55,6 +56,29 @@ async fn health() -> &'static str {
 /// 현재 앱 버전.
 async fn version() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "version": APP_VERSION }))
+}
+
+/// 사용자 프로필 (PC 이름 등). 로컬 파일 저장 — 암호화/앱파일 숨김은 별개(나중) 작업.
+#[derive(Serialize, Deserialize, Default)]
+struct Profile {
+    #[serde(default)]
+    pc_name: Option<String>,
+}
+
+async fn get_profile() -> Json<Profile> {
+    let p = std::fs::read_to_string("velox_profile.json")
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    Json(p)
+}
+
+async fn save_profile(Json(p): Json<Profile>) -> Json<serde_json::Value> {
+    let _ = std::fs::write(
+        "velox_profile.json",
+        serde_json::to_string_pretty(&p).unwrap_or_default(),
+    );
+    Json(serde_json::json!({ "ok": true }))
 }
 
 /// 현재 시스템 스냅샷(JSON). `collect()`는 블로킹이라 `spawn_blocking`으로 감싼다.
@@ -128,6 +152,14 @@ async fn diagnose_stream() -> Sse<ReceiverStream<Result<Event, Infallible>>> {
                 .json_data(serde_json::json!({ "who": who, "text": text }))
                 .unwrap_or_else(|_| Event::default().data("")))
         }
+        // 클라이언트가 취소/닫으면 tx.send가 실패 → 남은 (느린) AI 호출을 중단한다.
+        macro_rules! push {
+            ($e:expr) => {
+                if tx.send($e).await.is_err() {
+                    return;
+                }
+            };
+        }
 
         let snap = tokio::task::spawn_blocking(Snapshot::collect).await.ok();
         let base = snap
@@ -135,7 +167,7 @@ async fn diagnose_stream() -> Sse<ReceiverStream<Result<Event, Infallible>>> {
             .map(summarize)
             .unwrap_or_else(|| "스냅샷 읽기 실패".to_string());
         let state = format!("{base}\n- 최고 온도: 95.0°C  [시뮬레이션]");
-        let _ = tx.send(ev("시스템", &format!("시스템을 읽었습니다.\n{state}"))).await;
+        push!(ev("시스템", &format!("시스템을 읽었습니다.\n{state}")));
 
         let intent = velox_core::ai::query_text_with(
             "claude",
@@ -143,7 +175,7 @@ async fn diagnose_stream() -> Sse<ReceiverStream<Result<Event, Infallible>>> {
         )
         .await
         .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
-        let _ = tx.send(ev("Customer · Claude", &intent)).await;
+        push!(ev("Customer · Claude", &intent));
 
         let eng = velox_core::ai::query_text_with(
             "gpt",
@@ -154,7 +186,7 @@ async fn diagnose_stream() -> Sse<ReceiverStream<Result<Event, Infallible>>> {
         )
         .await
         .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
-        let _ = tx.send(ev("Engineer · GPT", &eng)).await;
+        push!(ev("Engineer · GPT", &eng));
 
         let conf = velox_core::ai::query_text_with(
             "gemini",
@@ -165,14 +197,12 @@ async fn diagnose_stream() -> Sse<ReceiverStream<Result<Event, Infallible>>> {
         )
         .await
         .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
-        let _ = tx.send(ev("Confirmer · Gemini", &conf)).await;
+        push!(ev("Confirmer · Gemini", &conf));
 
-        let _ = tx
-            .send(ev(
-                "done",
-                "진단 완료. 실제 조치는 CLI(velox diagnose --fix)에서 승인 후에만 실행됩니다.",
-            ))
-            .await;
+        push!(ev(
+            "done",
+            "진단 완료. 실제 조치는 CLI(velox diagnose --fix)에서 승인 후에만 실행됩니다."
+        ));
     });
     Sse::new(ReceiverStream::new(rx))
 }
