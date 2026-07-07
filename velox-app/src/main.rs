@@ -72,7 +72,7 @@ fn open_app_window() -> Option<Child> {
 fn main() {
     // 1) 엔진 시작
     let mut server = match Command::new(sibling("velox-server.exe")).spawn() {
-        Ok(c) => Some(c),
+        Ok(c) => c,
         Err(_) => {
             eprintln!("velox-server.exe를 찾을 수 없습니다. velox-app와 같은 폴더에 있어야 합니다.");
             return;
@@ -80,28 +80,17 @@ fn main() {
     };
     if !wait_for_server(6) {
         eprintln!("엔진이 시작되지 않았습니다.");
-        if let Some(mut s) = server.take() {
-            let _ = s.kill();
-        }
+        let _ = server.kill();
         return;
     }
 
-    // 2) 앱 창 열기
-    match open_app_window() {
-        Some(mut win) => {
-            let _ = win.wait(); // 창을 닫을 때까지 대기
-        }
-        None => {
-            let _ = Command::new("cmd").args(["/c", "start", "", URL]).spawn();
-            println!("앱 창을 못 열어 기본 브라우저로 열었습니다. 종료하려면 이 창에서 Ctrl+C.");
-            if let Some(s) = server.as_mut() {
-                let _ = s.wait();
-            }
-        }
+    // 2) 앱 창 열기 — 브라우저 런처는 창을 넘기고 즉시 반환하므로 wait 하지 않는다.
+    if open_app_window().is_none() {
+        let _ = Command::new("cmd").args(["/c", "start", "", URL]).spawn();
     }
+    println!("✔ APEX Velox 앱 실행 중 → {URL}");
+    println!("  앱 창을 닫아도 엔진은 살아있습니다. 완전 종료: 이 터미널에서 Ctrl+C.");
 
-    // 3) 창이 닫히면 엔진도 종료
-    if let Some(mut s) = server.take() {
-        let _ = s.kill();
-    }
+    // 3) 엔진이 사는 동안 유지 — Ctrl+C 하면 이 콘솔의 자식(엔진)도 함께 종료된다.
+    let _ = server.wait();
 }
