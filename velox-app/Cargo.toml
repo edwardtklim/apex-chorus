@@ -1,0 +1,13 @@
+[package]
+name = "velox-app"
+version = "0.1.0"
+edition = "2024"
+
+# Pulse 프로토타입(v0) — 엔진(velox-server)을 띄우고 UI를 크롬 없는 데스크탑 창으로 연다.
+# 의존성 없음(std만). 완전 번들 네이티브 앱(Tauri)은 다음 단계.
+
+[[bin]]
+name = "velox-app"
+path = "src/main.rs"
+
+[dependencies]
