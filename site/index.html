@@ -139,12 +139,17 @@
 
 <section id="run-sec"><div class="wrap center reveal">
   <h2>Run it</h2>
-  <p class="sub">Connected — run real diagnostics right here. Read-only and dry-run only.</p>
+  <p class="sub">Connected — run any command right here. Read-only and dry-run only.</p>
   <div id="run-app" style="display:none">
-    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
-      <button class="btn" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('doctor','doctor · AI 진단 (키·수초 필요)')">Run doctor</button>
-      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('diagnose','diagnose · 3단계 AI 제안 (실행 X)')">Diagnose · simulate</button>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <button class="btn" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('doctor','doctor · AI 진단 (키 필요)')">doctor</button>
+      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('diagnose','diagnose · AI 제안 (실행 X)')">diagnose</button>
+      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('bench','bench · CPU 점수')">bench</button>
+      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('drivers','drivers · 스캔')">drivers</button>
+      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('gpu','gpu · 상태')">gpu</button>
+      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('thermals','thermals · 온도')">thermals</button>
     </div>
+    <p style="font-size:12px;color:var(--muted);margin-top:12px">doctor · diagnose 는 AI(키 필요) · 나머지는 키 없이 됩니다.</p>
     <div class="out-wrap" id="out-wrap" style="display:none">
       <button class="copy" onclick="copyOut()">Copy</button>
       <pre id="run-out"></pre>
@@ -299,8 +304,11 @@
       '<div class="lg"><h4>GPU drivers</h4>'+gpus+'</div>';
   }
 
-  var ctrl=new AbortController(); setTimeout(function(){ctrl.abort();},1200);
-  fetch('/snapshot',{signal:ctrl.signal}).then(function(r){return r.json();}).then(appMode).catch(siteMode);
+  var ctrl=new AbortController(); setTimeout(function(){ctrl.abort();},2000);
+  fetch('/health',{signal:ctrl.signal}).then(function(r){
+    if(!r.ok) throw new Error('no engine');
+    return fetch('/snapshot').then(function(r2){return r2.json();});
+  }).then(appMode).catch(siteMode);
 })();
 function saveKeys(){
   var g=function(id){return document.getElementById(id);};
@@ -321,7 +329,7 @@ function runCmd(cmd,label){
   wrap.style.display='block';
   var t0=Date.now();
   var timer=setInterval(function(){ out.textContent='Running '+label+' … '+Math.round((Date.now()-t0)/1000)+'s'; },250);
-  fetch('/'+cmd).then(function(r){return r.text();})
+  fetch('/run/'+cmd).then(function(r){return r.text();})
     .then(function(t){ clearInterval(timer); out.textContent=(t||'').trim()||'(빈 응답)'; })
     .catch(function(){ clearInterval(timer); out.textContent='실행 실패 — 로컬 앱 모드(cargo run -p velox-server)에서만 가능합니다.'; })
     .finally(function(){ btns.forEach(function(b){b.disabled=false;}); wrap.scrollIntoView({behavior:'smooth',block:'nearest'}); });

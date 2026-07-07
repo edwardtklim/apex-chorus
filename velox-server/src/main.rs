@@ -6,6 +6,7 @@
 //!
 //! 안전 원칙: 읽기 전용만 · localhost(127.0.0.1) 바인딩만.
 
+use axum::extract::Path;
 use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -25,8 +26,7 @@ async fn main() {
         .route("/snapshot", get(snapshot))
         .route("/keys", post(save_keys))
         .route("/keys/status", get(keys_status))
-        .route("/doctor", get(doctor))
-        .route("/diagnose", get(diagnose));
+        .route("/run/:cmd", get(run_cmd));
 
     let listener = tokio::net::TcpListener::bind(ADDR)
         .await
@@ -131,18 +131,21 @@ fn run_velox(args: &[&str]) -> String {
     }
 }
 
-/// AI 종합 진단 (읽기 전용 + AI). 시스템을 바꾸지 않는다.
-async fn doctor() -> String {
-    tokio::task::spawn_blocking(|| run_velox(&["doctor"]))
+/// **화이트리스트된 읽기전용/dry-run 명령만** 실행한다 (임의 명령 실행 방지).
+/// 시스템을 바꾸는 것(diagnose --fix, checkpoint restore, 전원변경)은 여기 없다 = HTTP로 안 엶.
+async fn run_cmd(Path(cmd): Path<String>) -> String {
+    let args: Vec<&'static str> = match cmd.as_str() {
+        "doctor" => vec!["doctor"],
+        "diagnose" => vec!["diagnose", "--simulate-hot"],
+        "bench" => vec!["bench", "cpu"],
+        "drivers" => vec!["drivers"],
+        "gpu" => vec!["gpu", "status"],
+        "thermals" => vec!["thermals"],
+        _ => return "알 수 없는 명령입니다.".into(),
+    };
+    tokio::task::spawn_blocking(move || run_velox(&args))
         .await
-        .unwrap_or_else(|_| "doctor 태스크 실패".into())
-}
-
-/// 3단계 AI 안전 진단 — **--simulate-hot(제안만·실행 X)**. 실제 조치는 HTTP로 열지 않는다.
-async fn diagnose() -> String {
-    tokio::task::spawn_blocking(|| run_velox(&["diagnose", "--simulate-hot"]))
-        .await
-        .unwrap_or_else(|_| "diagnose 태스크 실패".into())
+        .unwrap_or_else(|_| "실행 태스크 실패".into())
 }
 
 /// `.env`(gitignore됨)의 `KEY=값` 줄을 upsert — 기존 다른 키는 보존한다.
