@@ -1,487 +1,308 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="ko" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>APEX Velox</title>
 <style>
-  :root{
-    --bg:#ffffff; --fg:#1d1d1f; --muted:#6e6e73; --soft:#f5f5f7; --soft2:#ebebed;
-    --code-bg:#f5f5f7; --code-fg:#1d1d1f; --accent:#0066cc;
-  }
-  [data-theme="dark"]{
-    --bg:#000000; --fg:#f5f5f7; --muted:#86868b; --soft:#0e0e0f; --soft2:#1c1c1e;
-    --code-bg:#1c1c1e; --code-fg:#f5f5f7; --accent:#2997ff;
-  }
-  *{box-sizing:border-box;}
-  html{scroll-behavior:smooth;}
-  body{margin:0; background:var(--bg); color:var(--fg);
-    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
-    -webkit-font-smoothing:antialiased; transition:background .4s,color .4s;}
-  a{color:inherit; text-decoration:none;}
-  .wrap{max-width:900px; margin:0 auto; padding:0 24px;}
+  :root{--bg:#fff;--fg:#1d1d1f;--muted:#6e6e73;--soft:#f5f5f7;--soft2:#ebebed;--line:#d2d2d7;--code-bg:#f5f5f7;--accent:#0066cc;}
+  [data-theme="dark"]{--bg:#000;--fg:#f5f5f7;--muted:#86868b;--soft:#0e0e0f;--soft2:#1c1c1e;--line:#2a2a2c;--code-bg:#1c1c1e;--accent:#2997ff;}
+  *{box-sizing:border-box;} html{scroll-behavior:smooth;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s;}
+  a{color:inherit;text-decoration:none;}
+  .wrap{max-width:900px;margin:0 auto;padding:0 24px;}
+  input{width:100%;height:44px;padding:0 14px;border:0;border-radius:12px;background:var(--soft2);color:var(--fg);font-size:15px;font-family:inherit;}
+  input:focus{outline:2px solid var(--accent);}
+  .btn{display:inline-flex;align-items:center;justify-content:center;height:44px;padding:0 22px;border-radius:980px;font-size:15px;font-weight:500;background:var(--fg);color:var(--bg);border:0;font-family:inherit;cursor:pointer;transition:opacity .2s;}
+  .btn.ghost{background:transparent;color:var(--accent);}
+  .btn:hover{opacity:.82;} .btn:disabled{opacity:.45;cursor:default;}
+  pre{background:var(--code-bg);color:var(--fg);border-radius:14px;padding:16px 18px;margin:0;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.7;overflow:auto;max-height:420px;white-space:pre-wrap;}
+  .muted{color:var(--muted);} .toggle{cursor:pointer;border:0;background:transparent;color:var(--muted);font-size:16px;}
 
-  nav{position:fixed; top:0; left:0; right:0; z-index:20; height:46px; display:flex; align-items:center;
-    background:color-mix(in srgb,var(--bg) 72%,transparent); backdrop-filter:saturate(180%) blur(20px);}
-  nav .wrap{display:flex; align-items:center; justify-content:space-between; width:100%;}
-  nav .brand{font-weight:600; font-size:15px;}
-  nav .links{display:flex; gap:24px; font-size:13px; color:var(--muted); align-items:center;}
-  nav .links a:hover{color:var(--fg);}
-  .toggle{cursor:pointer; border:0; background:transparent; color:var(--muted); font-size:16px; padding:4px;}
-  .toggle:hover{color:var(--fg);}
+  #gate{position:fixed;inset:0;background:var(--bg);z-index:200;display:none;align-items:center;justify-content:center;}
+  #gate .box{width:100%;max-width:380px;padding:24px;text-align:center;}
 
-  section{min-height:88vh; display:flex; align-items:center; padding:90px 0;}
-  section.tint{background:var(--soft);}
-  .center{text-align:center; width:100%;}
+  #app{display:none;}
+  #app header{display:flex;align-items:center;justify-content:space-between;padding:20px 0 14px;}
+  #app .brand{font-size:19px;font-weight:600;}
+  .tabs{display:flex;gap:2px;border-bottom:.5px solid var(--line);margin-bottom:30px;flex-wrap:wrap;}
+  .tab{padding:10px 15px;font-size:14px;color:var(--muted);cursor:pointer;border:0;background:transparent;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:inherit;}
+  .tab.active{color:var(--fg);border-bottom-color:var(--fg);font-weight:500;}
+  .tab:hover{color:var(--fg);}
+  .room{display:none;animation:fade .25s ease;} .room.active{display:block;}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  h2{font-size:24px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em;}
+  .rsub{font-size:14px;color:var(--muted);margin:0 0 22px;}
 
-  .reveal{opacity:0; transform:translateY(24px); transition:opacity .8s ease,transform .8s ease;}
-  .reveal.in{opacity:1; transform:none;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;}
+  .card{border:.5px solid var(--line);border-radius:16px;padding:18px 20px;}
+  .card h3{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;}
+  .r{display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:14px;}
+  .r span{color:var(--muted);} .r b{font-weight:500;text-align:right;}
+  .big{font-size:30px;font-weight:600;}
+  .gpu{padding:7px 0;border-bottom:.5px solid var(--line);} .gpu:last-child{border-bottom:0;}
+  .gpu .n{font-size:13px;} .gpu .v{font-size:12px;color:var(--muted);}
+  .btnrow{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;}
 
-  .eyebrow{font-size:15px; color:var(--muted); margin:0 0 14px;}
-  h1{font-size:76px; line-height:1.03; font-weight:600; letter-spacing:-.03em; margin:0;}
-  .tag{font-size:27px; font-weight:500; margin:20px 0 0; letter-spacing:-.01em;}
-  .lede{font-size:18px; color:var(--muted); max-width:560px; margin:16px auto 0;}
-  .cta{display:flex; gap:14px; justify-content:center; margin-top:36px; flex-wrap:wrap;}
-  .btn{display:inline-flex; align-items:center; height:44px; padding:0 24px; border-radius:980px;
-    font-size:15px; font-weight:500; background:var(--fg); color:var(--bg); transition:opacity .2s;}
-  .btn.ghost{background:transparent; color:var(--accent);}
-  .btn:hover{opacity:.8;}
-
-  h2{font-size:44px; font-weight:600; letter-spacing:-.02em; margin:0 0 10px;}
-  .sub{font-size:18px; color:var(--muted); margin:0 auto 46px; max-width:540px;}
-
-  .cols{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:36px 28px; text-align:left;}
-  .col h3{font-size:18px; font-weight:600; margin:0 0 6px;}
-  .col p{font-size:14px; color:var(--muted); margin:0;}
-
-  .stack{display:grid; gap:40px; text-align:left; width:100%;}
-  .cmd h3{font-size:22px; font-weight:600; margin:0 0 6px; letter-spacing:-.01em;}
-  .cmd p{font-size:15px; color:var(--muted); margin:0 0 16px; max-width:560px;}
-  pre{background:var(--code-bg); color:var(--code-fg); border-radius:14px; padding:18px 20px; margin:0;
-    font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace; font-size:13px; line-height:1.7; overflow:auto; transition:background .4s;}
-  pre .c{color:var(--muted);} pre .g{color:#34c759;} pre .b{color:var(--accent);}
-
-  .arch{display:flex; flex-direction:column; align-items:center;}
-  .node{padding:16px 26px; border-radius:14px; background:var(--soft2); text-align:center; min-width:190px;}
-  .node b{font-size:15px; font-weight:600;} .node span{display:block; font-size:12px; color:var(--muted); margin-top:3px;}
-  .pipe{width:1px; height:26px; background:var(--muted); opacity:.4;}
-  .pair{display:flex; gap:44px;}
-  .archnote{font-size:13px; color:var(--muted); margin-top:20px;}
-
-  .road{display:grid; grid-template-columns:repeat(3,1fr); gap:24px; text-align:left; width:100%;}
-  .road h4{font-size:13px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin:0 0 14px;}
-  .road ul{list-style:none; margin:0; padding:0;}
-  .road li{font-size:16px; padding:8px 0;}
-  .rdot{display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:9px; vertical-align:middle;}
-  .rdot.on{background:#34c759;} .rdot.dev{background:#ff9f0a;} .rdot.plan{background:var(--muted);}
-
-  .prin{display:flex; flex-wrap:wrap; gap:14px 30px; justify-content:center;}
-  .prin span{font-size:17px; font-weight:500;}
-
-  .live{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:34px 28px; text-align:left; width:100%;}
-  .lg h4{font-size:12px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin:0 0 12px;}
-  .lr{display:flex; justify-content:space-between; gap:10px; padding:6px 0; font-size:14px;}
-  .lr span{color:var(--muted);} .lr b{font-weight:500; text-align:right;}
-  .badge{display:inline-block; font-size:12px; color:var(--muted); margin-bottom:8px;}
-
-  .keys{max-width:440px; margin:0 auto; text-align:left;}
-  .keys label{display:block; font-size:13px; color:var(--muted); margin:14px 0 5px;}
-  .keys input{width:100%; height:42px; padding:0 14px; border-radius:12px; border:0; background:var(--soft2);
-    color:var(--fg); font-size:14px; font-family:inherit;}
-  .keys input:focus{outline:2px solid var(--accent);}
-  .keys .save{margin-top:22px; width:100%; height:46px; border:0; border-radius:12px; background:var(--fg); color:var(--bg); font-size:15px; font-weight:500; cursor:pointer;}
-  .keys .save:hover{opacity:.85;}
-  .keys .status{font-size:13px; color:var(--muted); margin-top:12px; text-align:center; min-height:18px;}
-  .locked{font-size:14px; color:var(--muted); text-align:center; max-width:420px; margin:0 auto;}
-  #run-app button:disabled{opacity:.45; cursor:default;}
-  .out-wrap{position:relative; margin-top:26px; text-align:left;}
-  .out-wrap .copy{position:absolute; top:10px; right:12px; font-size:12px; color:var(--muted); background:transparent; border:0; cursor:pointer;}
-  .out-wrap .copy:hover{color:var(--fg);}
-  #run-out{margin:0; max-height:400px; overflow:auto; white-space:pre-wrap;}
-  @keyframes pulse{0%,100%{opacity:1} 50%{opacity:.25}}
-  .fetching .dot{animation:pulse 1s infinite;}
-  #chat{max-width:640px;margin:24px auto 0;text-align:left;}
-  .bubble{border-radius:16px;padding:12px 16px;margin:12px 0;font-size:14px;line-height:1.65;white-space:pre-wrap;animation:rise .4s ease;}
+  .bubble{border-radius:16px;padding:12px 16px;margin:12px 0;font-size:14px;line-height:1.65;white-space:pre-wrap;animation:fade .3s ease;}
   .bubble .who{font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:500;}
-  .bubble.sys{background:var(--soft2);}
-  .bubble.ai{background:var(--soft);}
+  .bubble.sys{background:var(--soft2);} .bubble.ai{background:var(--soft);}
   .bubble.done{background:transparent;color:var(--muted);font-size:13px;text-align:center;}
-  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
   .dots{letter-spacing:3px;color:var(--muted);animation:pulse 1.2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .keys label{display:block;font-size:13px;color:var(--muted);margin:14px 0 5px;}
+  .warn{font-size:13px;color:var(--muted);background:var(--soft);border-radius:12px;padding:12px 14px;margin-bottom:18px;}
 
-  footer{padding:56px 0; color:var(--muted); font-size:13px; text-align:center;}
-  footer a{text-decoration:underline;}
-
-  @media(max-width:720px){
-    h1{font-size:46px;} h2{font-size:32px;} .road{grid-template-columns:1fr;} .pair{flex-direction:column; gap:0; align-items:center;}
-  }
+  /* marketing (site mode) */
+  #site{display:none;}
+  #site nav{position:sticky;top:0;height:48px;display:flex;align-items:center;background:color-mix(in srgb,var(--bg) 80%,transparent);backdrop-filter:blur(20px);border-bottom:.5px solid var(--line);z-index:10;}
+  #site nav .wrap{display:flex;justify-content:space-between;align-items:center;width:100%;}
+  #site .hero{text-align:center;padding:130px 0 90px;}
+  #site h1{font-size:72px;line-height:1.04;font-weight:600;letter-spacing:-.03em;margin:0;}
+  #site .tag{font-size:26px;font-weight:500;margin:20px 0 0;}
+  #site .lede{font-size:18px;color:var(--muted);max-width:560px;margin:14px auto 0;}
+  #site .cta{display:flex;gap:12px;justify-content:center;margin-top:34px;flex-wrap:wrap;}
+  #site section{padding:80px 0;} #site h2{font-size:40px;text-align:center;}
+  #site .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:32px 26px;margin-top:40px;text-align:left;}
+  #site .cols h3{font-size:17px;margin:0 0 6px;} #site .cols p{font-size:14px;color:var(--muted);margin:0;}
+  @media(max-width:720px){#site h1{font-size:46px;}}
 </style>
 </head>
 <body>
-<nav><div class="wrap">
-  <div class="brand">APEX</div>
-  <div class="links">
-    <a href="#reads">Velox</a><a href="#arch">Architecture</a><a href="#road">Roadmap</a>
-    <a href="https://github.com/edwardtklim/apex-chorus">GitHub</a>
-    <button class="toggle" id="tg" aria-label="theme">◑</button>
-  </div>
-</div></nav>
 
-<div id="gate" style="position:fixed;inset:0;background:var(--bg);z-index:200;display:none;align-items:center;justify-content:center">
-  <div style="width:100%;max-width:380px;padding:24px;text-align:center">
-    <div id="login-view">
-      <h1 style="font-size:42px;margin:0 0 6px">환영합니다</h1>
-      <p class="lede" style="margin:0 0 26px">APEX Velox</p>
-      <input id="login-id" placeholder="아이디" autocomplete="off" style="width:100%;height:44px;padding:0 14px;border:0;border-radius:12px;background:var(--soft2);color:var(--fg);font-size:15px;margin-bottom:10px">
-      <input id="login-pw" type="password" placeholder="비밀번호" style="width:100%;height:44px;padding:0 14px;border:0;border-radius:12px;background:var(--soft2);color:var(--fg);font-size:15px">
-      <button onclick="doLogin()" style="width:100%;height:46px;border:0;border-radius:12px;background:var(--fg);color:var(--bg);font-size:15px;font-weight:500;cursor:pointer;margin-top:18px">로그인</button>
-      <div id="login-msg" style="font-size:13px;color:#e24b4a;margin-top:12px;min-height:18px"></div>
-      <p style="font-size:12px;color:var(--muted);margin-top:6px">에디터용 마스터키 — admin0108 / admin0108 (배포판에선 제거)</p>
-    </div>
-    <div id="name-view" style="display:none">
-      <h1 style="font-size:34px;margin:0 0 8px">이 PC의 이름은?</h1>
-      <p class="lede" style="margin:0 0 18px">감지된 스펙</p>
-      <div id="name-spec" style="text-align:left;background:var(--soft);border-radius:14px;padding:16px 18px;font-size:14px;color:var(--muted);white-space:pre-wrap;margin-bottom:20px">읽는 중…</div>
-      <input id="pc-name" placeholder="예: 태경-갤럭시북" style="width:100%;height:44px;padding:0 14px;border:0;border-radius:12px;background:var(--soft2);color:var(--fg);font-size:15px">
-      <button onclick="saveName()" style="width:100%;height:46px;border:0;border-radius:12px;background:var(--fg);color:var(--bg);font-size:15px;font-weight:500;cursor:pointer;margin-top:18px">저장하고 시작</button>
-    </div>
+<div id="gate"><div class="box">
+  <div id="login-view">
+    <h1 style="font-size:42px;margin:0 0 6px">환영합니다</h1>
+    <p class="lede muted" style="margin:0 0 26px">APEX Velox</p>
+    <input id="login-id" placeholder="아이디" autocomplete="off" style="margin-bottom:10px">
+    <input id="login-pw" type="password" placeholder="비밀번호">
+    <button class="btn" onclick="doLogin()" style="width:100%;margin-top:18px">로그인</button>
+    <div id="login-msg" style="font-size:13px;color:#e24b4a;margin-top:12px;min-height:18px"></div>
+    <p style="font-size:12px" class="muted">에디터용 마스터키 — admin0108 / admin0108 (배포판 제거)</p>
   </div>
+  <div id="name-view" style="display:none">
+    <h1 style="font-size:32px;margin:0 0 8px">이 PC의 이름은?</h1>
+    <p class="lede muted" style="margin:0 0 18px">감지된 스펙</p>
+    <pre id="name-spec" style="text-align:left;margin-bottom:20px">읽는 중…</pre>
+    <input id="pc-name" placeholder="예: 태경-갤럭시북">
+    <button class="btn" onclick="saveName()" style="width:100%;margin-top:18px">저장하고 시작</button>
+  </div>
+</div></div>
+
+<div id="app"><div class="wrap">
+  <header>
+    <div class="brand" id="app-brand">APEX Velox</div>
+    <button class="toggle" onclick="toggleTheme()" aria-label="theme">◑</button>
+  </header>
+  <div class="tabs">
+    <button class="tab active" data-room="overview" onclick="showRoom('overview')">Overview</button>
+    <button class="tab" data-room="diagnose" onclick="showRoom('diagnose')">Diagnose</button>
+    <button class="tab" data-room="benchmark" onclick="showRoom('benchmark')">Benchmark</button>
+    <button class="tab" data-room="ultra" onclick="showRoom('ultra')">Velox Ultra</button>
+    <button class="tab" data-room="settings" onclick="showRoom('settings')">Settings</button>
+  </div>
+
+  <section class="room active" id="room-overview">
+    <h2>Overview</h2>
+    <p class="rsub">실시간 시스템 상태 · 3초마다 갱신</p>
+    <div class="grid" id="live"></div>
+  </section>
+
+  <section class="room" id="room-diagnose">
+    <h2>Diagnose</h2>
+    <p class="rsub">AI 2명(Claude · GPT)이 시스템을 진단하는 걸 실시간으로 봅니다. 읽기 전용.</p>
+    <div class="btnrow">
+      <button class="btn" onclick="diagnoseChat()">진단 시작 · live</button>
+      <button class="btn ghost" id="diag-cancel" style="display:none" onclick="cancelDiag()">진단 취소</button>
+    </div>
+    <div id="chat"></div>
+  </section>
+
+  <section class="room" id="room-benchmark">
+    <h2>Benchmark</h2>
+    <p class="rsub">성능 측정 · 키 없이 됩니다 (몇 초 소요).</p>
+    <div class="btnrow">
+      <button class="btn" onclick="runCmd('bench','CPU 벤치','bench-out')">CPU bench</button>
+      <button class="btn ghost" onclick="runCmd('gpu','GPU 상태','bench-out')">GPU status</button>
+    </div>
+    <pre id="bench-out" style="display:none"></pre>
+  </section>
+
+  <section class="room" id="room-ultra">
+    <h2>Velox Ultra</h2>
+    <p class="rsub">어드밴스드 · 엔지니어용. 일부는 관리자 권한이 필요합니다.</p>
+    <div class="warn">온도 센서 등은 관리자 권한으로 앱을 실행해야 값이 나옵니다. AI 진단(doctor)은 키가 필요합니다.</div>
+    <div class="btnrow">
+      <button class="btn ghost" onclick="runCmd('thermals','온도','ultra-out')">thermals</button>
+      <button class="btn ghost" onclick="runCmd('drivers','드라이버 스캔','ultra-out')">drivers</button>
+      <button class="btn ghost" onclick="runCmd('doctor','AI 종합 진단 (키 필요)','ultra-out')">doctor · AI</button>
+    </div>
+    <pre id="ultra-out" style="display:none"></pre>
+  </section>
+
+  <section class="room" id="room-settings">
+    <h2>Settings</h2>
+    <p class="rsub">API 키 · 업데이트 · 버전.</p>
+    <div class="keys" style="max-width:440px;margin-bottom:36px">
+      <div style="font-size:13px;font-weight:500;margin-bottom:4px">API keys</div>
+      <p class="muted" style="font-size:13px;margin:0 0 6px">로컬에만 저장(.env) · doctor/diagnose에 사용.</p>
+      <label>Anthropic (Claude)</label><input type="password" id="k-claude" placeholder="sk-ant-…">
+      <label>OpenAI (GPT)</label><input type="password" id="k-gpt" placeholder="sk-…">
+      <button class="btn" onclick="saveKeys()" style="width:100%;margin-top:20px">Save &amp; confirm</button>
+      <div class="muted" id="keys-status" style="font-size:13px;margin-top:12px;min-height:18px;text-align:center"></div>
+    </div>
+    <div>
+      <div style="font-size:13px;font-weight:500;margin-bottom:6px">Updates</div>
+      <div id="update-status" class="muted" style="font-size:14px">확인 중…</div>
+      <a id="update-link" class="btn ghost" style="margin-top:14px;display:none" href="https://github.com/edwardtklim/apex-chorus/releases">Get update →</a>
+    </div>
+  </section>
+</div></div>
+
+<div id="site">
+  <nav><div class="wrap">
+    <div style="font-weight:600">APEX</div>
+    <div style="display:flex;gap:22px;align-items:center;font-size:13px" class="muted">
+      <a href="#features">Velox</a><a href="#arch">Architecture</a>
+      <a href="https://github.com/edwardtklim/apex-chorus">GitHub</a>
+      <button class="toggle" onclick="toggleTheme()">◑</button>
+    </div>
+  </div></nav>
+  <header class="hero"><div class="wrap">
+    <h1>Read your system.<br>Diagnose safely.</h1>
+    <p class="tag">Understand every change.</p>
+    <p class="lede">AI-native Windows system diagnostics with safe, reversible actions.</p>
+    <div class="cta">
+      <a class="btn" href="https://github.com/edwardtklim/apex-chorus/releases/latest">Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/edwardtklim/apex-chorus">GitHub →</a>
+    </div>
+  </div></header>
+  <section id="features"><div class="wrap">
+    <h2>What it reads</h2>
+    <div class="cols">
+      <div><h3>Drivers</h3><p>Every installed driver and version.</p></div>
+      <div><h3>Thermals</h3><p>Temperature and throttling under load.</p></div>
+      <div><h3>Power</h3><p>Active plan and real CPU usage.</p></div>
+      <div><h3>AI Diagnosis</h3><p>A full read, reasoned about by AI.</p></div>
+      <div><h3>Snapshot</h3><p>Capture state, compare what changed.</p></div>
+    </div>
+  </div></section>
+  <section id="arch"><div class="wrap" style="text-align:center">
+    <h2>One engine, many faces</h2>
+    <p class="lede" style="margin-top:16px">velox-core (engine) → CLI · local API · desktop app. A platform, not a script.</p>
+  </div></section>
+  <footer style="border-top:.5px solid var(--line);padding:50px 0;text-align:center" class="muted">
+    <div class="wrap">APEX Velox — a high-school engineering project. Windows, local-first, open source.<br>
+    <a href="https://github.com/edwardtklim/apex-chorus" style="text-decoration:underline">github.com/edwardtklim/apex-chorus</a></div>
+  </footer>
 </div>
-
-<section><div class="wrap center reveal">
-  <p class="eyebrow" id="mode-eyebrow">APEX Velox</p>
-  <h1>Read your system.<br>Diagnose safely.</h1>
-  <p class="tag">Understand every change.</p>
-  <p class="lede">AI-native Windows system diagnostics with safe, reversible actions.</p>
-  <div class="cta">
-    <a class="btn" href="https://github.com/edwardtklim/apex-chorus/releases">Download</a>
-    <a class="btn ghost" href="https://github.com/edwardtklim/apex-chorus">GitHub →</a>
-  </div>
-</div></section>
-
-<section class="tint" id="live-sec"><div class="wrap center reveal">
-  <p class="badge" id="live-badge">Your machine</p>
-  <h2 id="live-title">Your machine, right now</h2>
-  <p class="sub" id="live-sub">This is what a browser can read. Velox, running locally, reads far deeper.</p>
-  <div class="live" id="live"></div>
-</div></section>
-
-<section id="run-sec"><div class="wrap center reveal">
-  <h2>Run it</h2>
-  <p class="sub">Connected — run any command right here. Read-only and dry-run only.</p>
-  <div id="run-app" style="display:none">
-    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-      <button class="btn" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('doctor','doctor · AI 진단 (키 필요)')">doctor</button>
-      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="diagnoseChat()">diagnose · live</button>
-      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('bench','bench · CPU 점수')">bench</button>
-      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('drivers','drivers · 스캔')">drivers</button>
-      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('gpu','gpu · 상태')">gpu</button>
-      <button class="btn ghost" style="border:0;font-family:inherit;cursor:pointer" onclick="runCmd('thermals','thermals · 온도')">thermals</button>
-    </div>
-    <p style="font-size:12px;color:var(--muted);margin-top:12px">doctor · diagnose 는 AI(키 필요) · 나머지는 키 없이 됩니다.</p>
-    <div class="out-wrap" id="out-wrap" style="display:none">
-      <button class="copy" onclick="copyOut()">Copy</button>
-      <pre id="run-out"></pre>
-    </div>
-    <div id="chat" style="display:none"></div>
-    <button id="diag-cancel" onclick="cancelDiag()" style="display:none;border:0;font-family:inherit;cursor:pointer;background:transparent;color:var(--accent);font-size:14px;margin-top:14px">진단 취소</button>
-  </div>
-  <div id="run-locked" class="locked">Download and run the local app to run live diagnostics.</div>
-</div></section>
-
-<section id="reads"><div class="wrap center reveal">
-  <h2>What it reads</h2>
-  <p class="sub">Everything measured on your machine. Nothing estimated remotely.</p>
-  <div class="cols">
-    <div class="col"><h3>Drivers</h3><p>Every installed driver and version, problem devices flagged.</p></div>
-    <div class="col"><h3>Thermals</h3><p>CPU / GPU temperature and sustained-load throttling.</p></div>
-    <div class="col"><h3>Power</h3><p>Active power plan and real CPU usage.</p></div>
-    <div class="col"><h3>AI Diagnosis</h3><p>A full read, reasoned about by AI — safely.</p></div>
-    <div class="col"><h3>Snapshot</h3><p>Capture state, then compare what changed over time.</p></div>
-  </div>
-</div></section>
-
-<section class="tint"><div class="wrap reveal">
-  <div class="center"><h2>Three commands</h2><p class="sub">The core of Velox. Real output, no mockups.</p></div>
-  <div class="stack">
-    <div class="cmd"><h3>velox doctor</h3><p>One command scans everything, and AI gives a full diagnosis.</p>
-<pre><span class="c">$ velox doctor</span>
-- CPU: Intel Core Ultra 7 356H (16 cores), 14%
-- RAM: 10240MB / 32143MB
-- Drivers: 문제 장치 없음 (총 357개 정상)
-<span class="b">[AI diagnosis]</span> 전반 양호. 지속 부하 시 발열 관리 권장…</pre></div>
-    <div class="cmd"><h3>velox diagnose</h3><p>A 3-stage AI proposes an action inside hard safety rails — whitelisted, reversible, checkpointed.</p>
-<pre><span class="c">$ velox diagnose --simulate-hot</span>
-1·Customer(Claude): 과열 우려…
-2·Engineer(GPT):   action=set_power_plan (balanced)
-3·Confirmer(Gemini): <span class="g">APPROVE</span>
-조치: 전원 모드 → Balanced  (whitelist <span class="g">✓</span> · reversible <span class="g">✓</span>)</pre></div>
-    <div class="cmd"><h3>velox snapshot / compare</h3><p>Snapshot before and after a change; compare shows only what structurally moved.</p>
-<pre><span class="c">$ velox compare before.json after.json</span>
-[변경] GPU · NVIDIA RTX 5070 : 32.0.15.9174 <span class="b">→</span> 32.0.16.0000</pre></div>
-  </div>
-</div></section>
-
-<section id="arch"><div class="wrap center reveal">
-  <h2>Architecture</h2>
-  <p class="sub">One engine. Many faces. A platform, not a script.</p>
-  <div class="arch">
-    <div class="node"><b>velox-core</b><span>engine · read · AI · safety</span></div>
-    <div class="pipe"></div>
-    <div class="pair">
-      <div style="display:flex;flex-direction:column;align-items:center"><div class="pipe"></div><div class="node"><b>velox-cli</b><span>terminal · available</span></div></div>
-      <div style="display:flex;flex-direction:column;align-items:center"><div class="pipe"></div><div class="node"><b>velox-server</b><span>local API · available</span></div></div>
-    </div>
-    <div class="pipe"></div>
-    <div class="node"><b>Pulse</b><span>desktop GUI · planned</span></div>
-  </div>
-  <p class="archnote">Chorus (multi-AI orchestration) lives inside the engine — a capability, not a layer.</p>
-</div></section>
-
-<section class="tint" id="road"><div class="wrap center reveal">
-  <h2>Roadmap</h2>
-  <p class="sub">Honest status. What's real today, what's next.</p>
-  <div class="road">
-    <div><h4>Available today</h4><ul><li><span class="rdot on"></span>Velox CLI</li><li><span class="rdot on"></span>Local HTTP API</li></ul></div>
-    <div><h4>In development</h4><ul><li><span class="rdot dev"></span>Pulse desktop app</li></ul></div>
-    <div><h4>Planned</h4><ul><li><span class="rdot plan"></span>Plugin SDK</li><li><span class="rdot plan"></span>Core extensions</li></ul></div>
-  </div>
-</div></section>
-
-<section id="settings"><div class="wrap center reveal">
-  <h2>API keys</h2>
-  <p class="sub" id="keys-sub">AI features (doctor, diagnose) use your own provider keys. Set locally, never sent anywhere but the provider.</p>
-  <div id="keys-app" class="keys" style="display:none">
-    <label>Anthropic (Claude)</label><input type="password" id="k-claude" placeholder="sk-ant-…">
-    <label>OpenAI (GPT)</label><input type="password" id="k-gpt" placeholder="sk-…">
-    <label>Google (Gemini)</label><input type="password" id="k-gemini" placeholder="AIza…">
-    <label>xAI (Grok)</label><input type="password" id="k-grok" placeholder="xai-…">
-    <button class="save" onclick="saveKeys()">Save &amp; confirm</button>
-    <div class="status" id="keys-status"></div>
-  </div>
-  <div id="keys-locked" class="locked">Download and run the local app to configure keys — this page can't touch your machine.</div>
-</div></section>
-
-<section id="update-sec"><div class="wrap center reveal">
-  <h2>Updates</h2>
-  <p class="sub">현재 버전과 최신 릴리스를 확인합니다.</p>
-  <div id="update-app" style="display:none">
-    <div id="update-status" style="font-size:16px">확인 중…</div>
-    <a id="update-link" class="btn ghost" style="margin-top:18px;display:none" href="https://github.com/edwardtklim/apex-chorus/releases">Get update →</a>
-  </div>
-  <div id="update-locked" class="locked">Available in the local app.</div>
-</div></section>
-
-<section class="tint"><div class="wrap center reveal">
-  <h2>Engineering principles</h2>
-  <div class="prin" style="margin-top:26px">
-    <span>Transparency over marketing</span><span>Safety before automation</span>
-    <span>Evidence over promises</span><span>Local-first</span><span>Open source</span>
-  </div>
-</div></section>
-
-<footer><div class="wrap">
-  APEX Velox — a high-school engineering project. Windows, local-first, open source.<br>
-  <a href="https://github.com/edwardtklim/apex-chorus">github.com/edwardtklim/apex-chorus</a>
-</div></footer>
 
 <script>
 (function(){
-  var root=document.documentElement, tg=document.getElementById('tg');
+  var root=document.documentElement;
   var pref=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');
   root.setAttribute('data-theme',pref);
-  tg.onclick=function(){var t=root.getAttribute('data-theme')==='dark'?'light':'dark';root.setAttribute('data-theme',t);localStorage.setItem('theme',t);};
-
-  var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)e.target.classList.add('in');});},{threshold:.15});
-  document.querySelectorAll('.reveal').forEach(function(el){io.observe(el);});
-
-  function browserSpec(){
-    var gpu='—';
-    try{var c=document.createElement('canvas');var gl=c.getContext('webgl')||c.getContext('experimental-webgl');var d=gl&&gl.getExtension('WEBGL_debug_renderer_info');if(d)gpu=gl.getParameter(d.UNMASKED_RENDERER_WEBGL);}catch(e){}
-    return [['CPU cores',(navigator.hardwareConcurrency||'—')+' cores'],['RAM',navigator.deviceMemory?('~'+navigator.deviceMemory+' GB'):'—'],['OS',(navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||'—'],['GPU',gpu]];
-  }
-  function rows(pairs){return pairs.map(function(p){return '<div class="lr"><span>'+p[0]+'</span><b>'+p[1]+'</b></div>';}).join('');}
-
-  function siteMode(){
-    document.getElementById('live-badge').textContent='Browser detected (real)';
-    document.getElementById('live-title').textContent='Your machine, right now';
-    document.getElementById('live-sub').textContent='This is what a browser can read. Velox, running locally, reads far deeper.';
-    document.getElementById('live').innerHTML=
-      '<div class="lg"><h4>Browser detected</h4>'+rows(browserSpec())+'</div>'+
-      '<div class="lg"><h4>Velox reads locally</h4><div class="lr"><span>Drivers</span><b>all versions</b></div><div class="lr"><span>Thermals</span><b>CPU / GPU</b></div><div class="lr"><span>Power</span><b>live usage</b></div><div class="lr"><span>AI</span><b>diagnosis + safe action</b></div></div>';
-    document.getElementById('keys-app').style.display='none';
-    document.getElementById('keys-locked').style.display='block';
-    document.getElementById('run-app').style.display='none';
-    document.getElementById('run-locked').style.display='block';
-    document.getElementById('update-app').style.display='none';
-    document.getElementById('update-locked').style.display='block';
-  }
-  function appMode(s){
-    if(!sessionStorage.getItem('apex_auth')){ document.getElementById('gate').style.display='flex'; }
-    document.getElementById('mode-eyebrow').textContent='APEX Velox · connected';
-    document.getElementById('live-badge').textContent='Live · local engine';
-    document.getElementById('live-title').textContent='Your machine, live';
-    document.getElementById('live-sub').textContent='Read-only · localhost only · nothing sent over the network · refreshes every 3s.';
-    render(s);
-    document.getElementById('keys-locked').style.display='none';
-    document.getElementById('keys-app').style.display='block';
-    document.getElementById('run-locked').style.display='none';
-    document.getElementById('run-app').style.display='block';
-    document.getElementById('update-locked').style.display='none';
-    document.getElementById('update-app').style.display='block';
-    refreshKeyStatus();
-    checkUpdate();
-    setInterval(function(){
-      document.body.classList.add('fetching');
-      fetch('/snapshot').then(function(r){return r.json();}).then(function(x){
-        document.body.classList.remove('fetching');
-        document.getElementById('ts').textContent='updated '+new Date().toLocaleTimeString();
-        render(x);
-      }).catch(function(){
-        document.body.classList.remove('fetching');
-        document.getElementById('ts').textContent='reconnecting…';
-      });
-    },3000);
-  }
-  function render(s){
-    var gpus=(s.gpus||[]).map(function(g){return '<div class="lr"><span>'+g.name+'</span><b>v'+g.driver_version+'</b></div>';}).join('')||'<span style="color:var(--muted)">—</span>';
-    document.getElementById('live').innerHTML=
-      '<div class="lg"><h4>System</h4>'+rows([['CPU',s.system.cpu_model],['Cores',s.system.logical_cores],['RAM',s.system.ram_total_mb+' MB'],['OS',s.system.os]])+'</div>'+
-      '<div class="lg"><h4>Status</h4>'+rows([['Power plan',s.plan_label],['CPU usage',s.cpu_usage.toFixed(0)+'%'],['Max temp',s.max_temp_c==null?'N/A (admin)':s.max_temp_c.toFixed(1)+'°C'],['Drivers',(s.drivers||[]).length+' installed']])+'</div>'+
-      '<div class="lg"><h4>GPU drivers</h4>'+gpus+'</div>';
-  }
-
   var ctrl=new AbortController(); setTimeout(function(){ctrl.abort();},2000);
-  fetch('/health',{signal:ctrl.signal}).then(function(r){
-    if(!r.ok) throw new Error('no engine');
-    return fetch('/snapshot').then(function(r2){return r2.json();});
-  }).then(appMode).catch(siteMode);
+  fetch('/health',{signal:ctrl.signal}).then(function(r){ if(!r.ok) throw 0; startApp(); }).catch(startSite);
 })();
-function saveKeys(){
-  var g=function(id){return document.getElementById(id);};
-  var body={claude:g('k-claude').value,gpt:g('k-gpt').value,gemini:g('k-gemini').value,grok:g('k-grok').value};
-  var st=g('keys-status');
-  var n=Object.keys(body).filter(function(p){return body[p]&&body[p].trim();}).length;
-  if(!n){ st.textContent='Enter at least one key.'; return; }
-  st.textContent='Saving…';
-  fetch('/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(function(r){return r.json();})
-    .then(function(res){ st.textContent='✓ '+res.saved+' key(s) saved to .env (local · gitignored)'; ['k-claude','k-gpt','k-gemini','k-grok'].forEach(function(i){g(i).value='';}); refreshKeyStatus(); })
-    .catch(function(){ st.textContent='저장 실패 — 로컬 앱 모드에서만 가능합니다.'; });
-}
-function runCmd(cmd,label){
-  var out=document.getElementById('run-out'), wrap=document.getElementById('out-wrap');
-  var btns=document.querySelectorAll('#run-app button.btn');
-  btns.forEach(function(b){b.disabled=true;});
-  wrap.style.display='block';
-  var t0=Date.now();
-  var timer=setInterval(function(){ out.textContent='Running '+label+' … '+Math.round((Date.now()-t0)/1000)+'s'; },250);
-  fetch('/run/'+cmd).then(function(r){return r.text();})
-    .then(function(t){ clearInterval(timer); out.textContent=(t||'').trim()||'(빈 응답)'; })
-    .catch(function(){ clearInterval(timer); out.textContent='실행 실패 — 로컬 앱 모드(cargo run -p velox-server)에서만 가능합니다.'; })
-    .finally(function(){ btns.forEach(function(b){b.disabled=false;}); wrap.scrollIntoView({behavior:'smooth',block:'nearest'}); });
-}
-function copyOut(){
-  var t=document.getElementById('run-out').textContent;
-  if(navigator.clipboard) navigator.clipboard.writeText(t);
-  var b=document.querySelector('.out-wrap .copy'); if(b){ b.textContent='Copied'; setTimeout(function(){b.textContent='Copy';},1200); }
-}
-function refreshKeyStatus(){
-  fetch('/keys/status').then(function(r){return r.json();}).then(function(st){
-    var m={claude:'k-claude',gpt:'k-gpt',gemini:'k-gemini',grok:'k-grok'};
-    Object.keys(m).forEach(function(p){ var el=document.getElementById(m[p]); if(el&&st[p]) el.placeholder='•••••••• configured'; });
-  }).catch(function(){});
-}
-var currentES=null;
-function diagnoseChat(){
-  var chat=document.getElementById('chat');
-  document.getElementById('out-wrap').style.display='none';
-  chat.style.display='block'; chat.innerHTML='';
-  var btns=document.querySelectorAll('#run-app button.btn'); btns.forEach(function(b){b.disabled=true;});
-  var cancel=document.getElementById('diag-cancel'); cancel.style.display='inline-flex';
-  var thinking=null;
-  var removeThinking=function(){ if(thinking){thinking.remove();thinking=null;} };
-  var finish=function(){ btns.forEach(function(b){b.disabled=false;}); cancel.style.display='none'; removeThinking(); currentES=null; };
-  var add=function(who,text,cls){
-    var b=document.createElement('div'); b.className='bubble '+cls;
-    var w=document.createElement('div'); w.className='who'; w.textContent=who;
-    var t=document.createElement('div'); t.textContent=text;
-    b.appendChild(w); b.appendChild(t); chat.appendChild(b);
-    b.scrollIntoView({behavior:'smooth',block:'nearest'});
-  };
-  var showThinking=function(label){
-    removeThinking();
-    thinking=document.createElement('div'); thinking.className='bubble ai';
-    thinking.innerHTML='<div class="who"></div><div class="dots">● ● ●</div>';
-    thinking.firstChild.textContent=label;
-    chat.appendChild(thinking); thinking.scrollIntoView({block:'nearest'});
-  };
-  var next={'시스템':'Customer · Claude 생각 중','Customer · Claude':'Engineer · GPT 생각 중','Engineer · GPT':'Confirmer · Gemini 검수 중'};
-  add('진단 시작','3명의 AI를 소집합니다…','sys');
-  showThinking('시스템 읽는 중');
-  var es=new EventSource('/diagnose/stream'); currentES=es;
-  es.onmessage=function(e){
-    var m; try{ m=JSON.parse(e.data); }catch(_){ return; }
-    removeThinking();
-    if(m.who==='done'){ add('완료',m.text,'done'); es.close(); finish(); return; }
-    add(m.who, m.text, m.who==='시스템'?'sys':'ai');
-    if(next[m.who]) showThinking(next[m.who]);
-  };
-  es.onerror=function(){ removeThinking(); add('오류','스트림 연결 실패 — 로컬 앱 모드에서만 됩니다.','done'); es.close(); finish(); };
-}
-function cancelDiag(){
-  if(currentES){ currentES.close(); }
-  var chat=document.getElementById('chat');
-  var b=document.createElement('div'); b.className='bubble done'; b.textContent='취소됨 — 남은 AI 호출을 중단했습니다.'; chat.appendChild(b);
-  document.querySelectorAll('#run-app button.btn').forEach(function(x){x.disabled=false;});
-  document.getElementById('diag-cancel').style.display='none';
-  currentES=null;
-}
-function checkUpdate(){
-  var st=document.getElementById('update-status'), link=document.getElementById('update-link');
-  fetch('/version').then(function(r){return r.json();}).then(function(v){
-    var cur=v.version; st.textContent='현재 버전: v'+cur+' · 최신 확인 중…';
-    fetch('https://api.github.com/repos/edwardtklim/apex-chorus/releases/latest')
-      .then(function(r){ if(!r.ok) throw 0; return r.json(); })
-      .then(function(rel){
-        var latest=(rel.tag_name||'').replace(/^v/,'');
-        if(latest && latest!==cur){ st.textContent='업데이트 있음: v'+cur+' → v'+latest; link.style.display='inline-flex'; }
-        else{ st.textContent='최신 버전입니다 (v'+cur+')'; }
-      })
-      .catch(function(){ st.textContent='현재 버전: v'+cur+' — 아직 공개 릴리스가 없거나 확인 실패'; });
-  }).catch(function(){ st.textContent='버전 확인 실패'; });
+function toggleTheme(){ var r=document.documentElement; var t=r.getAttribute('data-theme')==='dark'?'light':'dark'; r.setAttribute('data-theme',t); localStorage.setItem('theme',t); }
+
+/* ---------- SITE MODE ---------- */
+function startSite(){ document.getElementById('site').style.display='block'; }
+
+/* ---------- APP MODE ---------- */
+function startApp(){
+  document.getElementById('app').style.display='block';
+  if(sessionStorage.getItem('apex_auth')){ afterAuth(); } else { document.getElementById('gate').style.display='flex'; }
 }
 function doLogin(){
-  var id=(document.getElementById('login-id').value||'').trim();
-  var pw=document.getElementById('login-pw').value||'';
-  if(id==='admin0108' && pw==='admin0108'){ sessionStorage.setItem('apex_auth','1'); afterLogin(); }
+  var id=(val('login-id')||'').trim(), pw=val('login-pw')||'';
+  if(id==='admin0108'&&pw==='admin0108'){ sessionStorage.setItem('apex_auth','1'); afterLogin(); }
   else { document.getElementById('login-msg').textContent='아이디 또는 비밀번호가 틀렸습니다.'; }
 }
 function afterLogin(){
-  fetch('/profile').then(function(r){return r.json();}).then(function(p){
-    if(p && p.pc_name){ closeGate(p.pc_name); return; }
-    document.getElementById('login-view').style.display='none';
-    document.getElementById('name-view').style.display='block';
-    fetch('/snapshot').then(function(r){return r.json();}).then(function(s){
+  fetch('/profile').then(j).then(function(p){
+    if(p&&p.pc_name){ closeGate(p.pc_name); return; }
+    show('login-view',false); show('name-view',true);
+    fetch('/snapshot').then(j).then(function(s){
       document.getElementById('name-spec').textContent=
         'CPU        '+s.system.cpu_model+' ('+s.system.logical_cores+'코어)\n'+
-        'RAM        '+s.system.ram_total_mb+' MB\n'+
-        'OS         '+s.system.os+'\n'+
-        'GPU        '+((s.gpus[0]&&s.gpus[0].name)||'—')+'\n'+
-        '드라이버   '+(s.drivers||[]).length+'개';
-    }).catch(function(){});
+        'RAM        '+s.system.ram_total_mb+' MB\nOS         '+s.system.os+'\n'+
+        'GPU        '+((s.gpus[0]&&s.gpus[0].name)||'—')+'\n드라이버   '+(s.drivers||[]).length+'개';
+    }).catch(noop);
   }).catch(function(){ closeGate(); });
 }
-function saveName(){
-  var name=(document.getElementById('pc-name').value||'').trim();
-  if(!name) return;
-  fetch('/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pc_name:name})})
-    .then(function(){ closeGate(name); }).catch(function(){ closeGate(name); });
+function saveName(){ var n=(val('pc-name')||'').trim(); if(!n)return;
+  fetch('/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pc_name:n})}).then(function(){closeGate(n);}).catch(function(){closeGate(n);}); }
+function closeGate(name){ document.getElementById('gate').style.display='none'; if(name){document.getElementById('app-brand').textContent='APEX Velox · '+name;} afterAuth(); }
+function afterAuth(){ refreshLive(); setInterval(function(){ if(activeRoom==='overview') refreshLive(); },3000); refreshKeyStatus(); checkUpdate(); }
+
+var activeRoom='overview';
+function showRoom(r){
+  activeRoom=r;
+  var rooms=document.querySelectorAll('.room'); for(var i=0;i<rooms.length;i++){ rooms[i].classList.toggle('active', rooms[i].id==='room-'+r); }
+  var tabs=document.querySelectorAll('.tab'); for(var k=0;k<tabs.length;k++){ tabs[k].classList.toggle('active', tabs[k].getAttribute('data-room')===r); }
+  if(r==='overview') refreshLive();
 }
-function closeGate(name){
-  document.getElementById('gate').style.display='none';
-  if(name){ var eb=document.getElementById('mode-eyebrow'); if(eb) eb.textContent='APEX Velox · '+name; }
+
+function refreshLive(){
+  fetch('/snapshot').then(j).then(function(s){
+    var gpus=(s.gpus||[]).map(function(g){return '<div class="gpu"><div class="n">'+esc(g.name)+'</div><div class="v">v'+esc(g.driver_version)+'</div></div>';}).join('')||'<span class="muted">—</span>';
+    document.getElementById('live').innerHTML=
+      card('System',row('CPU',esc(s.system.cpu_model))+row('Cores',s.system.logical_cores)+row('RAM',s.system.ram_total_mb+' MB')+row('OS',esc(s.system.os)))+
+      card('Status',row('Power',esc(s.plan_label))+row('CPU usage',s.cpu_usage.toFixed(0)+'%')+row('Max temp',s.max_temp_c==null?'N/A (admin)':s.max_temp_c.toFixed(1)+'°C'))+
+      card('GPU drivers',gpus)+
+      card('Drivers','<div class="big">'+(s.drivers||[]).length+'</div><div class="muted" style="font-size:13px">installed</div>');
+  }).catch(noop);
 }
+function card(t,inner){ return '<div class="card"><h3>'+t+'</h3>'+inner+'</div>'; }
+function row(k,v){ return '<div class="r"><span>'+k+'</span><b>'+v+'</b></div>'; }
+
+function runCmd(cmd,label,outId){
+  var out=document.getElementById(outId); out.style.display='block';
+  var t0=Date.now(); out.textContent='Running '+label+' … 0s';
+  var tm=setInterval(function(){ out.textContent='Running '+label+' … '+Math.round((Date.now()-t0)/1000)+'s'; },300);
+  fetch('/run/'+cmd).then(function(r){return r.text();}).then(function(t){ clearInterval(tm); out.textContent=(t||'').trim()||'(빈 응답)'; })
+    .catch(function(){ clearInterval(tm); out.textContent='실행 실패.'; });
+}
+
+var currentES=null;
+function diagnoseChat(){
+  var chat=document.getElementById('chat'); chat.innerHTML='';
+  var cancel=document.getElementById('diag-cancel'); cancel.style.display='inline-flex';
+  var thinking=null, rm=function(){ if(thinking){thinking.remove();thinking=null;} };
+  var fin=function(){ cancel.style.display='none'; rm(); currentES=null; };
+  var add=function(who,text,cls){ var b=el('div','bubble '+cls); b.appendChild(el('div','who',who)); b.appendChild(el('div','',text)); chat.appendChild(b); b.scrollIntoView({block:'nearest'}); };
+  var think=function(label){ rm(); thinking=el('div','bubble ai'); thinking.appendChild(el('div','who',label)); var d=el('div','dots','● ● ●'); thinking.appendChild(d); chat.appendChild(thinking); thinking.scrollIntoView({block:'nearest'}); };
+  var next={'시스템':'Customer · Claude 생각 중','Customer · Claude':'Engineer · GPT 생각 중'};
+  add('진단 시작','AI 2명을 소집합니다…','sys'); think('시스템 읽는 중');
+  var es=new EventSource('/diagnose/stream'); currentES=es;
+  es.onmessage=function(e){ var m; try{m=JSON.parse(e.data);}catch(_){return;} rm();
+    if(m.who==='done'){ add('완료',m.text,'done'); es.close(); fin(); return; }
+    add(m.who,m.text,m.who==='시스템'?'sys':'ai'); if(next[m.who]) think(next[m.who]); };
+  es.onerror=function(){ rm(); add('오류','스트림 연결 실패.','done'); es.close(); fin(); };
+}
+function cancelDiag(){ if(currentES)currentES.close(); var b=el('div','bubble done','취소됨 — 남은 AI 호출을 중단했습니다.'); document.getElementById('chat').appendChild(b); document.getElementById('diag-cancel').style.display='none'; currentES=null; }
+
+function saveKeys(){
+  var body={claude:val('k-claude'),gpt:val('k-gpt')}; var st=document.getElementById('keys-status');
+  var n=Object.keys(body).filter(function(p){return body[p]&&body[p].trim();}).length;
+  if(!n){ st.textContent='키를 하나 이상 입력하세요.'; return; }
+  st.textContent='Saving…';
+  fetch('/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(j).then(function(res){ st.textContent='✓ '+res.saved+' key(s) saved (local · gitignored)'; ['k-claude','k-gpt'].forEach(function(i){document.getElementById(i).value='';}); refreshKeyStatus(); }).catch(function(){ st.textContent='저장 실패.'; });
+}
+function refreshKeyStatus(){ fetch('/keys/status').then(j).then(function(st){ if(st.claude)document.getElementById('k-claude').placeholder='•••••••• configured'; if(st.gpt)document.getElementById('k-gpt').placeholder='•••••••• configured'; }).catch(noop); }
+function checkUpdate(){ var st=document.getElementById('update-status'),link=document.getElementById('update-link');
+  fetch('/version').then(j).then(function(v){ var cur=v.version; st.textContent='현재 버전: v'+cur+' · 최신 확인 중…';
+    fetch('https://api.github.com/repos/edwardtklim/apex-chorus/releases/latest').then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(rel){ var latest=(rel.tag_name||'').replace(/^v/,''); if(latest&&latest!==cur){ st.textContent='업데이트 있음: v'+cur+' → v'+latest; link.style.display='inline-flex'; } else { st.textContent='최신 버전입니다 (v'+cur+')'; } }).catch(function(){ st.textContent='현재 버전: v'+cur+' — 공개 릴리스 없음/확인 실패'; });
+  }).catch(function(){ st.textContent='버전 확인 실패'; }); }
+
+function j(r){return r.json();}
+function val(id){var e=document.getElementById(id);return e?e.value:'';}
+function show(id,on){document.getElementById(id).style.display=on?'block':'none';}
+function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
+function esc(s){return (s==null?'':(''+s)).replace(/</g,'&lt;');}
+function noop(){}
 </script>
 </body>
 </html>

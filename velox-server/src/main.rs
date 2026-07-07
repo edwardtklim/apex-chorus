@@ -17,7 +17,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use velox_core::snapshot::Snapshot;
 
 const ADDR: &str = "127.0.0.1:7878";
-const APP_VERSION: &str = "0.11.0";
+const APP_VERSION: &str = "0.12.0";
 
 /// 사이트와 앱이 공유하는 단일 UI 파일.
 const INDEX_HTML: &str = include_str!("../../site/index.html");
@@ -187,17 +187,6 @@ async fn diagnose_stream() -> Sse<ReceiverStream<Result<Event, Infallible>>> {
         .await
         .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
         push!(ev("Engineer · GPT", &eng));
-
-        let conf = velox_core::ai::query_text_with(
-            "gemini",
-            &format!(
-                "너는 검수 AI다. 아래 제안이 안전하고 합리적이면 'APPROVE', 아니면 'REJECT'로 시작해 한국어 한 줄 이유.\n제안: {}",
-                eng.trim()
-            ),
-        )
-        .await
-        .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
-        push!(ev("Confirmer · Gemini", &conf));
 
         push!(ev(
             "done",
