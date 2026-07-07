@@ -239,6 +239,16 @@
   <div id="keys-locked" class="locked">Download and run the local app to configure keys — this page can't touch your machine.</div>
 </div></section>
 
+<section id="update-sec"><div class="wrap center reveal">
+  <h2>Updates</h2>
+  <p class="sub">현재 버전과 최신 릴리스를 확인합니다.</p>
+  <div id="update-app" style="display:none">
+    <div id="update-status" style="font-size:16px">확인 중…</div>
+    <a id="update-link" class="btn ghost" style="margin-top:18px;display:none" href="https://github.com/edwardtklim/apex-chorus/releases">Get update →</a>
+  </div>
+  <div id="update-locked" class="locked">Available in the local app.</div>
+</div></section>
+
 <section class="tint"><div class="wrap center reveal">
   <h2>Engineering principles</h2>
   <div class="prin" style="margin-top:26px">
@@ -280,6 +290,8 @@
     document.getElementById('keys-locked').style.display='block';
     document.getElementById('run-app').style.display='none';
     document.getElementById('run-locked').style.display='block';
+    document.getElementById('update-app').style.display='none';
+    document.getElementById('update-locked').style.display='block';
   }
   function appMode(s){
     document.getElementById('mode-eyebrow').textContent='APEX Velox · connected';
@@ -291,7 +303,10 @@
     document.getElementById('keys-app').style.display='block';
     document.getElementById('run-locked').style.display='none';
     document.getElementById('run-app').style.display='block';
+    document.getElementById('update-locked').style.display='none';
+    document.getElementById('update-app').style.display='block';
     refreshKeyStatus();
+    checkUpdate();
     setInterval(function(){
       document.body.classList.add('fetching');
       fetch('/snapshot').then(function(r){return r.json();}).then(function(x){
@@ -374,6 +389,20 @@ function diagnoseChat(){
     add(m.who, m.text, m.who==='시스템'?'sys':'ai');
   };
   es.onerror=function(){ add('오류','스트림 연결 실패 — 로컬 앱 모드에서만 됩니다.','done'); es.close(); done(); };
+}
+function checkUpdate(){
+  var st=document.getElementById('update-status'), link=document.getElementById('update-link');
+  fetch('/version').then(function(r){return r.json();}).then(function(v){
+    var cur=v.version; st.textContent='현재 버전: v'+cur+' · 최신 확인 중…';
+    fetch('https://api.github.com/repos/edwardtklim/apex-chorus/releases/latest')
+      .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+      .then(function(rel){
+        var latest=(rel.tag_name||'').replace(/^v/,'');
+        if(latest && latest!==cur){ st.textContent='업데이트 있음: v'+cur+' → v'+latest; link.style.display='inline-flex'; }
+        else{ st.textContent='최신 버전입니다 (v'+cur+')'; }
+      })
+      .catch(function(){ st.textContent='현재 버전: v'+cur+' — 아직 공개 릴리스가 없거나 확인 실패'; });
+  }).catch(function(){ st.textContent='버전 확인 실패'; });
 }
 </script>
 </body>

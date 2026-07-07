@@ -17,6 +17,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use velox_core::snapshot::Snapshot;
 
 const ADDR: &str = "127.0.0.1:7878";
+const APP_VERSION: &str = "0.10.0";
 
 /// 사이트와 앱이 공유하는 단일 UI 파일.
 const INDEX_HTML: &str = include_str!("../../site/index.html");
@@ -31,7 +32,8 @@ async fn main() {
         .route("/keys", post(save_keys))
         .route("/keys/status", get(keys_status))
         .route("/run/:cmd", get(run_cmd))
-        .route("/diagnose/stream", get(diagnose_stream));
+        .route("/diagnose/stream", get(diagnose_stream))
+        .route("/version", get(version));
 
     let listener = tokio::net::TcpListener::bind(ADDR)
         .await
@@ -48,6 +50,11 @@ async fn index() -> Html<&'static str> {
 /// 헬스 체크.
 async fn health() -> &'static str {
     "ok"
+}
+
+/// 현재 앱 버전.
+async fn version() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "version": APP_VERSION }))
 }
 
 /// 현재 시스템 스냅샷(JSON). `collect()`는 블로킹이라 `spawn_blocking`으로 감싼다.
