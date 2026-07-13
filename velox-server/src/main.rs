@@ -17,7 +17,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use velox_core::snapshot::Snapshot;
 
 const ADDR: &str = "127.0.0.1:7878";
-const APP_VERSION: &str = "0.12.0";
+const APP_VERSION: &str = "0.13.0";
 
 /// 사이트와 앱이 공유하는 단일 UI 파일.
 const INDEX_HTML: &str = include_str!("../../site/index.html");
@@ -34,7 +34,9 @@ async fn main() {
         .route("/run/:cmd", get(run_cmd))
         .route("/diagnose/stream", get(diagnose_stream))
         .route("/version", get(version))
-        .route("/profile", get(get_profile).post(save_profile));
+        .route("/profile", get(get_profile).post(save_profile))
+        .route("/snapshot/save", post(save_baseline))
+        .route("/snapshot/compare", get(compare_baseline));
 
     let listener = tokio::net::TcpListener::bind(ADDR)
         .await
@@ -56,6 +58,34 @@ async fn health() -> &'static str {
 /// 현재 앱 버전.
 async fn version() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "version": APP_VERSION }))
+}
+
+/// 현재 스냅샷을 기준(baseline)으로 저장한다.
+async fn save_baseline() -> Json<serde_json::Value> {
+    let snap = tokio::task::spawn_blocking(Snapshot::collect).await.ok();
+    if let Some(s) = &snap {
+        let _ = std::fs::write(
+            "velox_baseline.json",
+            serde_json::to_string(s).unwrap_or_default(),
+        );
+    }
+    Json(serde_json::json!({ "saved": snap.is_some() }))
+}
+
+/// 저장된 baseline과 현재 상태를 비교(구조 변화만). baseline 없으면 error.
+async fn compare_baseline() -> Json<serde_json::Value> {
+    let base: Option<Snapshot> = std::fs::read_to_string("velox_baseline.json")
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+    let base = match base {
+        Some(b) => b,
+        None => return Json(serde_json::json!({ "error": "no_baseline" })),
+    };
+    let cur = tokio::task::spawn_blocking(Snapshot::collect)
+        .await
+        .unwrap_or_else(|_| base.clone());
+    let diff = velox_core::snapshot::compare(&base, &cur);
+    Json(serde_json::to_value(&diff).unwrap_or_default())
 }
 
 /// 사용자 프로필 (PC 이름 등). 로컬 파일 저장 — 암호화/앱파일 숨김은 별개(나중) 작업.

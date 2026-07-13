@@ -74,6 +74,10 @@
   <div id="login-view">
     <h1 style="font-size:42px;margin:0 0 6px">환영합니다</h1>
     <p class="lede muted" style="margin:0 0 26px">APEX Velox</p>
+    <button class="btn ghost" onclick="socialLogin('Google')" style="width:100%;border:.5px solid var(--line);color:var(--fg);margin-bottom:8px">Continue with Google</button>
+    <button class="btn ghost" onclick="socialLogin('X')" style="width:100%;border:.5px solid var(--line);color:var(--fg);margin-bottom:8px">Continue with X</button>
+    <button class="btn ghost" onclick="socialLogin('GitHub')" style="width:100%;border:.5px solid var(--line);color:var(--fg)">Continue with GitHub</button>
+    <div class="muted" style="font-size:12px;margin:18px 0 10px">— 또는 마스터키 —</div>
     <input id="login-id" placeholder="아이디" autocomplete="off" style="margin-bottom:10px">
     <input id="login-pw" type="password" placeholder="비밀번호">
     <button class="btn" onclick="doLogin()" style="width:100%;margin-top:18px">로그인</button>
@@ -98,6 +102,7 @@
     <button class="tab active" data-room="overview" onclick="showRoom('overview')">Overview</button>
     <button class="tab" data-room="diagnose" onclick="showRoom('diagnose')">Diagnose</button>
     <button class="tab" data-room="benchmark" onclick="showRoom('benchmark')">Benchmark</button>
+    <button class="tab" data-room="snapshot" onclick="showRoom('snapshot')">Snapshot</button>
     <button class="tab" data-room="ultra" onclick="showRoom('ultra')">Velox Ultra</button>
     <button class="tab" data-room="settings" onclick="showRoom('settings')">Settings</button>
   </div>
@@ -105,6 +110,7 @@
   <section class="room active" id="room-overview">
     <h2>Overview</h2>
     <p class="rsub">실시간 시스템 상태 · 3초마다 갱신</p>
+    <div id="health" style="font-size:16px;font-weight:500;margin-bottom:18px">…</div>
     <div class="grid" id="live"></div>
   </section>
 
@@ -126,6 +132,17 @@
       <button class="btn ghost" onclick="runCmd('gpu','GPU 상태','bench-out')">GPU status</button>
     </div>
     <pre id="bench-out" style="display:none"></pre>
+  </section>
+
+  <section class="room" id="room-snapshot">
+    <h2>Snapshot</h2>
+    <p class="rsub">지금 상태를 기준으로 저장하고, 나중에 뭐가 바뀌었는지 비교합니다 (드라이버·하드웨어·전원).</p>
+    <div class="btnrow">
+      <button class="btn" onclick="saveBaseline()">현재를 기준으로 저장</button>
+      <button class="btn ghost" onclick="compareBaseline()">기준과 비교</button>
+    </div>
+    <div id="snap-status" class="muted" style="font-size:13px;margin-bottom:16px;min-height:18px"></div>
+    <div id="snap-diff"></div>
   </section>
 
   <section class="room" id="room-ultra">
@@ -220,6 +237,7 @@ function doLogin(){
   if(id==='admin0108'&&pw==='admin0108'){ sessionStorage.setItem('apex_auth','1'); afterLogin(); }
   else { document.getElementById('login-msg').textContent='아이디 또는 비밀번호가 틀렸습니다.'; }
 }
+function socialLogin(n){ document.getElementById('login-msg').textContent=n+' 로그인은 곧 추가됩니다 — 지금은 마스터키로 진행하세요.'; }
 function afterLogin(){
   fetch('/profile').then(j).then(function(p){
     if(p&&p.pc_name){ closeGate(p.pc_name); return; }
@@ -247,6 +265,8 @@ function showRoom(r){
 
 function refreshLive(){
   fetch('/snapshot').then(j).then(function(s){
+    var t=s.max_temp_c, hEl=document.getElementById('health');
+    if(hEl) hEl.textContent=(t!=null&&t>=85?'⚠ 온도 높음':'✓ 정상')+' · CPU '+s.cpu_usage.toFixed(0)+'% · 드라이버 '+(s.drivers||[]).length+'개';
     var gpus=(s.gpus||[]).map(function(g){return '<div class="gpu"><div class="n">'+esc(g.name)+'</div><div class="v">v'+esc(g.driver_version)+'</div></div>';}).join('')||'<span class="muted">—</span>';
     document.getElementById('live').innerHTML=
       card('System',row('CPU',esc(s.system.cpu_model))+row('Cores',s.system.logical_cores)+row('RAM',s.system.ram_total_mb+' MB')+row('OS',esc(s.system.os)))+
@@ -264,6 +284,19 @@ function runCmd(cmd,label,outId){
   var tm=setInterval(function(){ out.textContent='Running '+label+' … '+Math.round((Date.now()-t0)/1000)+'s'; },300);
   fetch('/run/'+cmd).then(function(r){return r.text();}).then(function(t){ clearInterval(tm); out.textContent=(t||'').trim()||'(빈 응답)'; })
     .catch(function(){ clearInterval(tm); out.textContent='실행 실패.'; });
+}
+function saveBaseline(){ var st=document.getElementById('snap-status'); st.textContent='저장 중…'; fetch('/snapshot/save',{method:'POST'}).then(j).then(function(r){ st.textContent=r.saved?'✓ 현재 상태를 기준으로 저장했습니다.':'저장 실패.'; }).catch(function(){st.textContent='저장 실패.';}); }
+function compareBaseline(){ var st=document.getElementById('snap-status'), out=document.getElementById('snap-diff'); st.textContent='비교 중…'; out.innerHTML='';
+  fetch('/snapshot/compare').then(j).then(function(d){
+    if(d.error==='no_baseline'){ st.textContent='먼저 "현재를 기준으로 저장"을 눌러 기준을 만드세요.'; return; }
+    var empty=(!d.changed||!d.changed.length)&&(!d.added||!d.added.length)&&(!d.removed||!d.removed.length);
+    if(empty){ st.textContent='✓ 구조적 변화 없음 (저장 시점과 동일).'; return; }
+    st.textContent='변화 감지:'; var h='';
+    (d.changed||[]).forEach(function(c){ h+='<div class="r"><span>'+esc(c.item)+'</span><b>'+esc(c.old)+' → '+esc(c.new)+'</b></div>'; });
+    (d.added||[]).forEach(function(a){ h+='<div class="r"><span>추가</span><b>+ '+esc(a)+'</b></div>'; });
+    (d.removed||[]).forEach(function(x){ h+='<div class="r"><span>삭제</span><b>- '+esc(x)+'</b></div>'; });
+    out.innerHTML='<div class="card">'+h+'</div>';
+  }).catch(function(){ st.textContent='비교 실패.'; });
 }
 
 var currentES=null;
