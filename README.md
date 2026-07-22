@@ -3,16 +3,16 @@
 > **Build Systems. Connect Everything.**
 > A Rust command-line tool that reads your machine and lets AI reason about it — safely.
 
-APEX Velox is a Windows system-telemetry and AI-orchestration CLI written in Rust.
+APEX Velox is a Windows system-health and AI-development tool written in Rust.
 It is the first pillar of **APEX**, a long-term project to connect hardware, the OS, and
 AI into one coherent system.
 
 ```
-APEX
-├── Velox    ← system / telemetry / CLI  (this repo)
-├── Chorus   ← multi-AI orchestration & routing
-├── Core     ← runtime / automation hub  (future)
-└── Pulse    ← UI                         (future)
+APEX Velox
+├── Pulse       ← native desktop interface
+├── Local API   ← authenticated localhost bridge
+├── Velox CLI   ← terminal interface / advanced tools
+└── Velox Core  ← health · benchmark · snapshot · AI · safety engine
 ```
 
 ---
@@ -22,12 +22,16 @@ APEX
 A Cargo workspace that separates the **engine** from the **interface**:
 
 ```
-velox-core/  (lib)  — engine: util · watch · ai · checkpoint · action   (returns data)
-velox-cli/   (bin)  — interface: commands · output · interactive approval
+velox-core/    (lib) — engine: structured reports · AI · safety (returns data)
+velox-cli/     (bin) — terminal interface · advanced commands · approval
+velox-server/  (bin) — authenticated localhost API for Pulse
+velox-app/     (bin) — native WebView2 desktop shell
+site/                — shared web/app interface
 ```
 
-`velox-core` is a reusable library — a future GUI (Pulse) or plugins import the same
-engine. This is the "features → platform" transition, done by incremental extraction
+`velox-core` is a reusable library — Pulse, the local API, CLI, and future plugins use the same
+engine. The three primary product flows are **PC Health**, **CPU Benchmark**, and
+**Snapshot/Compare**. This is the "features → platform" transition, done by incremental extraction
 (see [velox-core/README.md](velox-core/README.md)). Principle: **engine returns data,
 the caller presents.**
 
@@ -67,8 +71,8 @@ read → AI proposes → whitelist check → Confirmer AI → human approval →
 - **AI selects, never generates.** The AI can only choose from a hardcoded whitelist of
   safe, reversible actions — it never produces raw commands. Hallucination or prompt
   injection can't escalate into arbitrary execution.
-- **3-stage AI** (`diagnose`): Customer (Claude) → Engineer (GPT) → Confirmer (Gemini),
-  independent models cross-checking before anything runs.
+- **Cross-checking AI** (`diagnose` CLI): Customer → Engineer → Confirmer providers
+  cross-check before anything runs. Pulse's read-only diagnosis currently uses Claude + GPT.
 - **Reality check.** Inputs are validated for physical plausibility first (e.g. 95°C while
   the CPU is idle ⇒ suspected sensor/bug ⇒ no action) — garbage in won't cause action.
 - **Persistence.** The daemon acts only on a *sustained* anomaly (N consecutive reads),
@@ -90,7 +94,11 @@ cargo build --release
 
 ### Setup (for AI features)
 
-Copy `.env.example` to `.env` and fill in your keys (dotenv format — `KEY=value`):
+Use Settings in the desktop app or `velox chorus set <provider> <key>`. New keys are
+stored in the operating system credential vault (Windows Credential Manager), never
+returned by the local API, and only loaded in memory when a provider is called.
+
+`.env` remains supported only as a development/migration fallback:
 
 ```
 ANTHROPIC_API_KEY=...
@@ -122,17 +130,21 @@ Claude / GPT / Gemini / Grok APIs · `clap` · `tokio` · `reqwest`
 
 ---
 
-## Status (v0.9.0)
+## Status (v0.14.0 — alpha)
 
-**Core extraction:** the project is now a workspace — the engine (`velox-core`:
-util · watch · ai · checkpoint · action) is split from the CLI (`velox-cli`), so the
-same engine can back a future GUI / plugins.
+All workspace crates share one version. Pulse starts its local server on a random
+loopback port with a per-launch session token, verifies startup, and shuts the child
+server down with the app. Health and CPU benchmark results now come from structured
+`velox-core` reports shared by the CLI and local API.
 
-**Verified end-to-end:** the full AI action loop is proven via `diagnose --simulate-hot` —
-Customer (Claude) → Engineer (GPT) → Confirmer (Gemini APPROVE) → auto-checkpoint →
-execute (power plan) → verify → `checkpoint restore`. The complete safety stack
-(whitelist · 3-stage AI · reality check · persistence · dry-run · checkpoint · approval ·
-cooldown) is in place.
+**Privacy:** remote AI receives the minimum context by default. The user can explicitly
+choose `minimal`, `system`, or `drivers`; the exact serialized payload is previewed in
+the diagnosis transcript before it is sent.
+
+**Safety boundary:** Pulse exposes structured read-only reports and dry-run diagnosis only.
+Real actions remain in the CLI behind a whitelist, human approval, a power-plan checkpoint,
+verification, and rollback. The checkpoint currently restores APEX-managed power-plan changes;
+it is not a full Windows restore point.
 
 **Performance suite:** `bench` (incl. sustained/throttle `stability`) + `timeline`
 (track regressions vs your personal best). **Advisory tools** (read-only, AI advice):
@@ -152,13 +164,15 @@ hardware. Read-only at most.
 - **v0.8 — Chorus provider architecture ✅:** custom providers (`chorus add`, OpenAI-
   compatible — OpenRouter, local Ollama, custom endpoints), **semantic routing**, multi-AI
   **consensus**, and a multi-judge **model benchmark** (`chorus bench`, 0–1000 scale).
-- **v0.9 — Core extraction ✅ / smarter automation:** workspace split (`velox-core`
-  engine + `velox-cli` interface) ✅; next: offline/online auto-switch, startup &
-  background optimizer (a new *action* behind the whitelist + safety stack).
+- **v0.9 — Core extraction ✅:** workspace split (`velox-core` engine + `velox-cli` interface).
+- **v0.14 — Product core ✅:** unified versions; structured Health/Benchmark/Snapshot
+  flows; native credential storage; minimum-data AI policy; authenticated random-port app bridge.
+- **v0.15 — Field test:** cancellable background jobs, repair-session report export,
+  two-PC validation, installer cleanup and error UX.
 - **v1.0 — Stable release:** config file, installer, docs, **code signing** (so Smart App
   Control users can run it), polished UX. First public CLI.
-- **Beyond (APEX Core / Pulse):** `velox-core` grows into a long-running service +
-  plugin system; Pulse GUI (Tauri + React) imports the same engine.
+- **Beyond:** provider adapters for GPT/Claude/Ollama-compatible desktop models, consented
+  context routing, and an agent/tool protocol grow on the same Core without bypassing policy.
 
 ---
 

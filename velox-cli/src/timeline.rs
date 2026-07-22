@@ -80,7 +80,10 @@ pub fn show() {
     let best = entries.iter().map(|e| e.multi).fold(f64::MIN, f64::max);
     println!("기준 점수(개인 최고 멀티) = {:.1} GFLOPS = 100%\n", best);
 
-    println!("{:<10} {:>10} {:>10} {:>8}", "시점", "single", "multi", "vs최고");
+    println!(
+        "{:<10} {:>10} {:>10} {:>8}",
+        "시점", "single", "multi", "vs최고"
+    );
     println!("{}", "-".repeat(42));
     for e in &entries {
         let pct = e.multi / best * 100.0;

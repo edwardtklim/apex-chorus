@@ -34,7 +34,14 @@ pub fn restore_latest() {
         Restore::BadFormat => println!("✗ 알 수 없는 체크포인트 형식."),
         Restore::Done { label, ok } => {
             println!("마지막 정상 상태로 복원: 전원 모드 → {}", label);
-            println!("{}", if ok { "✓ 복원 완료" } else { "✗ 복원 실패 (권한 문제일 수 있음)" });
+            println!(
+                "{}",
+                if ok {
+                    "✓ 복원 완료"
+                } else {
+                    "✗ 복원 실패 (권한 문제일 수 있음)"
+                }
+            );
         }
     }
 }

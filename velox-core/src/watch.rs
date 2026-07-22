@@ -24,6 +24,12 @@ pub struct Watcher {
     nets: Networks,
 }
 
+impl Default for Watcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Watcher {
     pub fn new() -> Self {
         let mut sys = System::new();
@@ -91,7 +97,10 @@ impl Watcher {
         for (mp, free) in &m.disks {
             disk_summ.push_str(&format!("{}{:.0}%여유 ", mp, free));
             if *free < DISK_FREE_WARN_PCT {
-                events.push(format!("Disk {} 여유 {:.0}% (임계 {:.0}%)", mp, free, DISK_FREE_WARN_PCT));
+                events.push(format!(
+                    "Disk {} 여유 {:.0}% (임계 {:.0}%)",
+                    mp, free, DISK_FREE_WARN_PCT
+                ));
             }
         }
         if m.rx_mbps > NET_WARN_MBPS || m.tx_mbps > NET_WARN_MBPS {

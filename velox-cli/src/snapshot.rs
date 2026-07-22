@@ -37,7 +37,10 @@ pub fn run(json: bool, out: Option<String>) {
     println!("=== APEX Velox — snapshot ===\n");
 
     println!("[시스템]");
-    println!("  CPU : {} ({}코어)", snap.system.cpu_model, snap.system.logical_cores);
+    println!(
+        "  CPU : {} ({}코어)",
+        snap.system.cpu_model, snap.system.logical_cores
+    );
     println!("  RAM : {} MB", snap.system.ram_total_mb);
     println!("  OS  : {} (kernel {})", snap.system.os, snap.system.kernel);
 
@@ -58,6 +61,9 @@ pub fn run(json: bool, out: Option<String>) {
         }
     }
 
-    println!("\n[드라이버] {}개 (전체 목록·버전은 --json / --out)", snap.drivers.len());
+    println!(
+        "\n[드라이버] {}개 (전체 목록·버전은 --json / --out)",
+        snap.drivers.len()
+    );
     println!("\n(저장: `velox snapshot --out before.json` · 기계용: `--json`)");
 }

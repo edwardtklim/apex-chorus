@@ -1,7 +1,7 @@
-use wmi::{COMLibrary, WMIConnection};
 use serde::Deserialize;
 use std::io::Write;
 use std::time::Duration;
+use wmi::{COMLibrary, WMIConnection};
 
 const WARNING_CELSIUS: f32 = 85.0;
 

@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use ferrisetw::EventRecord;
 use ferrisetw::provider::Provider;
 use ferrisetw::schema_locator::SchemaLocator;
 use ferrisetw::trace::UserTrace;
-use ferrisetw::EventRecord;
 
 use sysinfo::System;
 
@@ -16,7 +16,10 @@ const DXGI_PRESENT_START: u16 = 42;
 
 pub fn run(seconds: u64) {
     println!("=== APEX Velox — fps ===");
-    println!("Counting DXGI present events per process for {}s...", seconds);
+    println!(
+        "Counting DXGI present events per process for {}s...",
+        seconds
+    );
     println!("(Requires Administrator. Launch a game/3D app to see its FPS.)\n");
 
     let counts: Arc<Mutex<HashMap<u32, u64>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -52,7 +55,7 @@ pub fn run(seconds: u64) {
 
     let map = counts.lock().unwrap();
     let mut rows: Vec<(u32, u64)> = map.iter().map(|(&k, &v)| (k, v)).collect();
-    rows.sort_by(|a, b| b.1.cmp(&a.1));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.1));
 
     if rows.is_empty() {
         println!("No present events captured.");

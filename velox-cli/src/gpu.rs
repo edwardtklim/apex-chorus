@@ -1,7 +1,7 @@
-use wmi::{COMLibrary, WMIConnection};
 use serde::Deserialize;
 use std::process::Command;
 use std::time::{Duration, Instant};
+use wmi::{COMLibrary, WMIConnection};
 
 pub struct GpuSample {
     pub utilization: f64,
@@ -11,14 +11,14 @@ pub struct GpuSample {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename = "Win32_VideoController")]
-pub struct GPU {
+pub struct Gpu {
     #[serde(rename = "Name")]
     pub name: String,
     #[serde(rename = "AdapterRAM")]
     pub adapter_ram: Option<u32>,
 }
 
-pub fn get_gpu_info(wmi: &WMIConnection) -> Vec<GPU> {
+pub fn get_gpu_info(wmi: &WMIConnection) -> Vec<Gpu> {
     wmi.query().unwrap_or_default()
 }
 
@@ -85,16 +85,16 @@ pub fn sample_nvidia_smi(seconds: u64) -> Option<Vec<GpuSample>> {
     let mut samples = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(seconds);
     while Instant::now() < deadline {
-        if let Some(lines) = query_nvidia_smi() {
-            if let Some(line) = lines.first() {
-                let parts: Vec<&str> = line.split(',').map(|p| p.trim()).collect();
-                if parts.len() == 5 {
-                    samples.push(GpuSample {
-                        utilization: parts[1].parse().unwrap_or(0.0),
-                        mem_used: parts[2].parse().unwrap_or(0.0),
-                        temperature: parts[4].parse().unwrap_or(0.0),
-                    });
-                }
+        if let Some(lines) = query_nvidia_smi()
+            && let Some(line) = lines.first()
+        {
+            let parts: Vec<&str> = line.split(',').map(|p| p.trim()).collect();
+            if parts.len() == 5 {
+                samples.push(GpuSample {
+                    utilization: parts[1].parse().unwrap_or(0.0),
+                    mem_used: parts[2].parse().unwrap_or(0.0),
+                    temperature: parts[4].parse().unwrap_or(0.0),
+                });
             }
         }
         std::thread::sleep(Duration::from_millis(500));

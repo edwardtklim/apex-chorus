@@ -50,11 +50,11 @@ fn scan() -> Option<DeviceScan> {
     let total = devices.len();
     let mut problems = Vec::new();
     for d in devices {
-        if let Some(code) = d.error_code {
-            if code != 0 {
-                let name = d.name.unwrap_or_else(|| "(이름 없음)".to_string());
-                problems.push((name, code));
-            }
+        if let Some(code) = d.error_code
+            && code != 0
+        {
+            let name = d.name.unwrap_or_else(|| "(이름 없음)".to_string());
+            problems.push((name, code));
         }
     }
     Some(DeviceScan { total, problems })
@@ -73,7 +73,11 @@ pub fn problem_summary() -> String {
                 .iter()
                 .map(|(n, c)| format!("{} (code {} {})", n, c, code_meaning(*c)))
                 .collect();
-            format!("- 드라이버 문제 장치 {}개: {}", s.problems.len(), names.join(", "))
+            format!(
+                "- 드라이버 문제 장치 {}개: {}",
+                s.problems.len(),
+                names.join(", ")
+            )
         }
     }
 }
@@ -124,7 +128,12 @@ pub async fn run_analyze() {
         Some(s) if !s.problems.is_empty() => {
             summary.push_str(&format!("문제 장치 {}개:\n", s.problems.len()));
             for (name, code) in &s.problems {
-                summary.push_str(&format!("- {} (code {} {})\n", name, code, code_meaning(*code)));
+                summary.push_str(&format!(
+                    "- {} (code {} {})\n",
+                    name,
+                    code,
+                    code_meaning(*code)
+                ));
             }
         }
         Some(s) => summary.push_str(&format!("문제 장치 없음 (총 {}개 정상)\n", s.total)),
@@ -168,7 +177,12 @@ pub fn run() {
             } else {
                 println!("문제 장치: {}개 ⚠\n", s.problems.len());
                 for (name, code) in &s.problems {
-                    println!("  • {}\n    └ code {} — {}", name, code, code_meaning(*code));
+                    println!(
+                        "  • {}\n    └ code {} — {}",
+                        name,
+                        code,
+                        code_meaning(*code)
+                    );
                 }
             }
         }

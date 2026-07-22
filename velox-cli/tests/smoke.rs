@@ -25,7 +25,10 @@ fn checkpoint_list_runs() {
         .args(["checkpoint", "list"])
         .output()
         .expect("velox 실행 실패");
-    assert!(out.status.success(), "`velox checkpoint list` 는 0으로 종료해야 함");
+    assert!(
+        out.status.success(),
+        "`velox checkpoint list` 는 0으로 종료해야 함"
+    );
 }
 
 #[test]
@@ -34,5 +37,8 @@ fn chorus_models_runs() {
         .args(["chorus", "models"])
         .output()
         .expect("velox 실행 실패");
-    assert!(out.status.success(), "`velox chorus models` 는 0으로 종료해야 함");
+    assert!(
+        out.status.success(),
+        "`velox chorus models` 는 0으로 종료해야 함"
+    );
 }

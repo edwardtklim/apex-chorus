@@ -6,9 +6,12 @@
 //!
 //! 안전 원칙: 읽기 전용만 · localhost(127.0.0.1) 바인딩만.
 
-use axum::extract::Path;
-use axum::response::sse::{Event, Sse};
+use axum::extract::{Path, Query, State};
+use axum::http::{Request, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::Html;
+use axum::response::sse::{Event, Sse};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -16,19 +19,31 @@ use std::convert::Infallible;
 use tokio_stream::wrappers::ReceiverStream;
 use velox_core::snapshot::Snapshot;
 
-const ADDR: &str = "127.0.0.1:7878";
-const APP_VERSION: &str = "0.13.0";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Clone)]
+struct AppState {
+    session_token: String,
+}
 
 /// 사이트와 앱이 공유하는 단일 UI 파일.
 const INDEX_HTML: &str = include_str!("../../site/index.html");
 
 #[tokio::main]
 async fn main() {
-    dotenv::dotenv().ok(); // 저장된 API 키(.env)를 프로세스 env로 로드
+    dotenv::dotenv().ok(); // legacy/dev migration fallback; new keys use the OS credential store
+    velox_core::credentials::migrate_dotenv(std::path::Path::new(".env"));
+    let addr = std::env::var("VELOX_ADDR").unwrap_or_else(|_| "127.0.0.1:7878".into());
+    let state = AppState {
+        session_token: std::env::var("VELOX_SESSION_TOKEN")
+            .unwrap_or_else(|_| format!("manual-{}", std::process::id())),
+    };
     let app = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
         .route("/snapshot", get(snapshot))
+        .route("/report/health", get(health_report))
+        .route("/report/benchmark", post(cpu_benchmark))
         .route("/keys", post(save_keys))
         .route("/keys/status", get(keys_status))
         .route("/run/:cmd", get(run_cmd))
@@ -36,18 +51,48 @@ async fn main() {
         .route("/version", get(version))
         .route("/profile", get(get_profile).post(save_profile))
         .route("/snapshot/save", post(save_baseline))
-        .route("/snapshot/compare", get(compare_baseline));
+        .route("/snapshot/compare", get(compare_baseline))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_session,
+        ))
+        .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(ADDR)
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("포트 바인딩 실패");
-    println!("velox-server → http://{ADDR}  (브라우저로 열어보세요 · 읽기 전용)");
+    println!("velox-server → http://{addr}");
     axum::serve(listener, app).await.expect("서버 종료");
 }
 
+async fn require_session(
+    State(state): State<AppState>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    if request.uri().path() == "/" {
+        return next.run(request).await;
+    }
+    let cookie = request
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let expected = format!("apex_session={}", state.session_token);
+    if cookie.split(';').any(|part| part.trim() == expected) {
+        next.run(request).await
+    } else {
+        (StatusCode::UNAUTHORIZED, "invalid APEX session").into_response()
+    }
+}
+
 /// 공유 UI 서빙 — 엔진 연결되면 /snapshot을 읽어 앱 모드로 뜬다.
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
+async fn index(State(state): State<AppState>) -> impl IntoResponse {
+    let cookie = format!(
+        "apex_session={}; HttpOnly; SameSite=Strict; Path=/",
+        state.session_token
+    );
+    ([(header::SET_COOKIE, cookie)], Html(INDEX_HTML))
 }
 
 /// 헬스 체크.
@@ -119,6 +164,24 @@ async fn snapshot() -> Json<Snapshot> {
     Json(snap)
 }
 
+async fn health_report() -> Json<velox_core::health::HealthReport> {
+    Json(
+        tokio::task::spawn_blocking(velox_core::health::HealthReport::collect)
+            .await
+            .unwrap_or_else(|_| {
+                velox_core::health::HealthReport::from_snapshot(Snapshot::default())
+            }),
+    )
+}
+
+async fn cpu_benchmark() -> Json<velox_core::benchmark::CpuBenchmarkReport> {
+    Json(
+        tokio::task::spawn_blocking(velox_core::benchmark::CpuBenchmarkReport::run)
+            .await
+            .expect("benchmark task failed"),
+    )
+}
+
 /// 브라우저에서 넘어온 API 키. (앱 모드에서만 호출됨)
 #[derive(Deserialize)]
 struct Keys {
@@ -128,53 +191,50 @@ struct Keys {
     grok: Option<String>,
 }
 
-/// API 키를 로컬 `.env`에 저장한다. **설정(자격증명) 쓰기**이지 시스템 조치가 아니며,
-/// localhost 전용이다. diagnose 같은 *시스템 변경* 액션은 여전히 HTTP로 열지 않는다.
+/// API 키를 OS 자격증명 저장소에 저장한다. 값은 응답/로그에 절대 포함하지 않는다.
 async fn save_keys(Json(k): Json<Keys>) -> Json<serde_json::Value> {
     let pairs: Vec<(&str, String)> = [
-        ("ANTHROPIC_API_KEY", k.claude),
-        ("OPENAI_API_KEY", k.gpt),
-        ("GEMINI_API_KEY", k.gemini),
-        ("GROK_API_KEY", k.grok),
+        ("claude", k.claude),
+        ("gpt", k.gpt),
+        ("gemini", k.gemini),
+        ("grok", k.grok),
     ]
     .into_iter()
     .filter_map(|(name, v)| v.filter(|s| !s.trim().is_empty()).map(|s| (name, s)))
     .collect();
 
-    let saved = upsert_env(&pairs);
-    // 현재 서버 프로세스 env에도 즉시 반영 → 방금 저장한 키로 바로 스트리밍 진단이 됨.
-    for (name, val) in &pairs {
-        unsafe { std::env::set_var(name, val) };
+    let mut saved = 0;
+    let mut errors = Vec::new();
+    for (provider, secret) in pairs {
+        match velox_core::credentials::set(provider, &secret) {
+            Ok(()) => saved += 1,
+            Err(error) => errors.push(format!("{provider}: {error}")),
+        }
     }
-    Json(serde_json::json!({ "saved": saved }))
+    Json(serde_json::json!({ "saved": saved, "errors": errors }))
 }
 
 /// 어떤 키가 설정됐는지만 반환 (값은 절대 노출 안 함).
 async fn keys_status() -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "claude": env_has("ANTHROPIC_API_KEY"),
-        "gpt": env_has("OPENAI_API_KEY"),
-        "gemini": env_has("GEMINI_API_KEY"),
-        "grok": env_has("GROK_API_KEY"),
+        "claude": velox_core::ai::has_key("claude"),
+        "gpt": velox_core::ai::has_key("gpt"),
+        "gemini": velox_core::ai::has_key("gemini"),
+        "grok": velox_core::ai::has_key("grok"),
     }))
 }
 
-/// `.env`에 `NAME=<비어있지 않은 값>` 줄이 있는지.
-fn env_has(name: &str) -> bool {
-    std::fs::read_to_string(".env")
-        .map(|s| {
-            s.lines().any(|l| {
-                let l = l.trim_start();
-                l.starts_with(&format!("{name}="))
-                    && l.splitn(2, '=').nth(1).map_or(false, |v| !v.trim().is_empty())
-            })
-        })
-        .unwrap_or(false)
+#[derive(Deserialize, Default)]
+struct DiagnoseQuery {
+    #[serde(default)]
+    scope: velox_core::privacy::ContextScope,
 }
 
 /// 3단계 AI 진단을 **실시간 스트리밍(SSE)**으로 보낸다 — UI가 채팅처럼 한 줄씩 보여준다.
 /// 읽기 전용 "대화"다(시스템을 바꾸지 않음). 데모용으로 95°C를 주입한다.
-async fn diagnose_stream() -> Sse<ReceiverStream<Result<Event, Infallible>>> {
+async fn diagnose_stream(
+    Query(options): Query<DiagnoseQuery>,
+) -> Sse<ReceiverStream<Result<Event, Infallible>>> {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(16);
     tokio::spawn(async move {
         fn ev(who: &str, text: &str) -> Result<Event, Infallible> {
@@ -192,16 +252,26 @@ async fn diagnose_stream() -> Sse<ReceiverStream<Result<Event, Infallible>>> {
         }
 
         let snap = tokio::task::spawn_blocking(Snapshot::collect).await.ok();
-        let base = snap
+        let context = snap
             .as_ref()
-            .map(summarize)
-            .unwrap_or_else(|| "스냅샷 읽기 실패".to_string());
-        let state = format!("{base}\n- 최고 온도: 95.0°C  [시뮬레이션]");
-        push!(ev("시스템", &format!("시스템을 읽었습니다.\n{state}")));
+            .map(|s| velox_core::privacy::AiContext::from_snapshot(s, options.scope));
+        let state = context
+            .as_ref()
+            .map(|c| c.to_prompt_json())
+            .unwrap_or_else(|| "{}".into());
+        push!(ev(
+            "시스템",
+            &format!(
+                "AI 전송 범위: {:?}\n전송 전 미리보기: {state}",
+                options.scope
+            )
+        ));
 
         let intent = velox_core::ai::query_text_with(
             "claude",
-            &format!("다음 시스템 상태에서 사용자가 가장 걱정할 점을 한국어 한 줄로 요약:\n{state}"),
+            &format!(
+                "다음 시스템 상태에서 사용자가 가장 걱정할 점을 한국어 한 줄로 요약:\n{state}"
+            ),
         )
         .await
         .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
@@ -226,27 +296,14 @@ async fn diagnose_stream() -> Sse<ReceiverStream<Result<Event, Infallible>>> {
     Sse::new(ReceiverStream::new(rx))
 }
 
-/// 스냅샷을 짧은 요약 문자열로.
-fn summarize(s: &Snapshot) -> String {
-    format!(
-        "- CPU: {} ({}코어), 사용률 {:.0}%\n- RAM: {} MB\n- 전원 모드: {}\n- 설치 드라이버: {}개",
-        s.system.cpu_model,
-        s.system.logical_cores,
-        s.cpu_usage,
-        s.system.ram_total_mb,
-        s.plan_label,
-        s.drivers.len(),
-    )
-}
-
 /// velox CLI 실행 파일 경로 (같은 폴더의 velox.exe 우선, 없으면 PATH의 velox).
 fn velox_bin() -> std::path::PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let cand = dir.join("velox.exe");
-            if cand.exists() {
-                return cand;
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let cand = dir.join("velox.exe");
+        if cand.exists() {
+            return cand;
         }
     }
     std::path::PathBuf::from("velox")
@@ -283,25 +340,4 @@ async fn run_cmd(Path(cmd): Path<String>) -> String {
     tokio::task::spawn_blocking(move || run_velox(&args))
         .await
         .unwrap_or_else(|_| "실행 태스크 실패".into())
-}
-
-/// `.env`(gitignore됨)의 `KEY=값` 줄을 upsert — 기존 다른 키는 보존한다.
-fn upsert_env(pairs: &[(&str, String)]) -> usize {
-    if pairs.is_empty() {
-        return 0;
-    }
-    let path = ".env";
-    let mut lines: Vec<String> = std::fs::read_to_string(path)
-        .map(|s| s.lines().map(str::to_string).collect())
-        .unwrap_or_default();
-    for (name, val) in pairs {
-        let prefix = format!("{name}=");
-        let entry = format!("{name}={val}");
-        match lines.iter_mut().find(|l| l.trim_start().starts_with(&prefix)) {
-            Some(l) => *l = entry,
-            None => lines.push(entry),
-        }
-    }
-    let _ = std::fs::write(path, lines.join("\n") + "\n");
-    pairs.len()
 }

@@ -1,7 +1,8 @@
 [package]
 name = "velox-app"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 # Pulse — 네이티브 데스크탑 앱. 자체 창(WebView2 임베드)에 통합 UI를 띄운다.
 # 엔진(velox-server)을 자식 프로세스로 띄우고, 창을 닫으면 함께 종료.
@@ -13,3 +14,4 @@ path = "src/main.rs"
 [dependencies]
 wry = "0.45"
 tao = "0.30"
+rand = "0.8"

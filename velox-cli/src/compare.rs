@@ -2,11 +2,10 @@
 //
 // 저장된 두 스냅샷(JSON)을 비교해 **구조 변화**만 보여준다 (순간값은 무시).
 
-use velox_core::snapshot::{compare, Snapshot};
+use velox_core::snapshot::{Snapshot, compare};
 
 fn load(path: &str) -> Result<Snapshot, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("{} 읽기 실패: {}", path, e))?;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{} 읽기 실패: {}", path, e))?;
     serde_json::from_str(&text).map_err(|e| format!("{} JSON 파싱 실패: {}", path, e))
 }
 

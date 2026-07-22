@@ -28,7 +28,10 @@ fn read_max_temp() -> Option<f32> {
 }
 
 pub async fn run(seconds: u64) {
-    println!("=== APEX Velox — tempcheck ({}초 모니터링 · 읽기 전용) ===\n", seconds);
+    println!(
+        "=== APEX Velox — tempcheck ({}초 모니터링 · 읽기 전용) ===\n",
+        seconds
+    );
 
     let mut samples: Vec<f32> = Vec::new();
     let mut above = 0u32; // 85°C 이상 샘플 수 (≈ 지속 초)

@@ -1,31 +1,9 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const PRIME_LIMIT: u64 = 8_000_000;
 const MATMUL_N: usize = 320;
-
-fn sieve_count(limit: u64) -> u64 {
-    let limit = limit as usize;
-    let mut is_prime = vec![true; limit + 1];
-    is_prime[0] = false;
-    if limit >= 1 {
-        is_prime[1] = false;
-    }
-    let mut i = 2usize;
-    while i * i <= limit {
-        if is_prime[i] {
-            let mut j = i * i;
-            while j <= limit {
-                is_prime[j] = false;
-                j += i;
-            }
-        }
-        i += 1;
-    }
-    is_prime.iter().filter(|&&p| p).count() as u64
-}
 
 fn matmul(n: usize) -> f64 {
     let a: Vec<f64> = (0..n * n).map(|i| (i % 97) as f64 * 0.5).collect();
@@ -44,7 +22,9 @@ fn matmul(n: usize) -> f64 {
 }
 
 fn available_cores() -> usize {
-    thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+    thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 /// 타임라인 기록용 빠른 점수 (single GFLOPS, multi GFLOPS). 고정 작업량 = 비교 가능.
@@ -151,7 +131,10 @@ fn report(label: &str, buckets: &[f64]) {
         "성능 하락 큼 ⚠ (쓰로틀링 의심)"
     };
     println!("[{}]", label);
-    println!("  초당 GFLOPS: peak {:.1} · avg {:.1} · min {:.1}", peak, avg, min);
+    println!(
+        "  초당 GFLOPS: peak {:.1} · avg {:.1} · min {:.1}",
+        peak, avg, min
+    );
     println!("  처음→끝: {:.1} → {:.1} GFLOPS", first, last);
     println!("  유지율: 평균 {:.0}% · 최저 {:.0}%", ret_avg, ret_min);
     println!("  판정: {}", verdict);
@@ -166,7 +149,10 @@ pub fn run_stability(seconds: u64) {
     let single = stability_single(seconds, MATMUL_N);
     report("싱글스레드", &single);
 
-    println!("\n멀티스레드({}코어) {}초 지속 부하 측정...", cores, seconds);
+    println!(
+        "\n멀티스레드({}코어) {}초 지속 부하 측정...",
+        cores, seconds
+    );
     let multi = stability_multi(seconds, MATMUL_N, cores);
     report("멀티스레드", &multi);
 
@@ -180,7 +166,10 @@ pub fn run_stability(seconds: u64) {
 pub fn run_thermal(seconds: u64, limit: f32) {
     let cores = available_cores();
     println!("=== APEX Velox — bench thermal (쿨러 부하 테스트) ===");
-    println!("전코어({}) {}초 지속 부하 · 임계 {:.0}°C\n", cores, seconds, limit);
+    println!(
+        "전코어({}) {}초 지속 부하 · 임계 {:.0}°C\n",
+        cores, seconds, limit
+    );
 
     if velox_core::snapshot::max_temp_c().is_none() {
         println!("⚠ CPU 온도 센서 읽기 실패 (관리자 권한 필요/보드 미지원).");
@@ -227,7 +216,9 @@ pub fn run_thermal(seconds: u64, limit: f32) {
         gflops.push(gf);
 
         if sec % 10 == 0 || sec + 1 == seconds {
-            let ts = temp.map(|t| format!("{:.1}°C", t)).unwrap_or_else(|| "N/A".into());
+            let ts = temp
+                .map(|t| format!("{:.1}°C", t))
+                .unwrap_or_else(|| "N/A".into());
             println!("  {:>3}s · 온도 {} · 처리량 {:.0} GFLOPS", sec + 1, ts, gf);
         }
     }
@@ -254,7 +245,10 @@ pub fn run_thermal(seconds: u64, limit: f32) {
         let peak = gflops.iter().cloned().fold(f64::MIN, f64::max);
         let min = gflops.iter().cloned().fold(f64::MAX, f64::min);
         let ret = min / peak * 100.0;
-        println!("성능: peak {:.0} · min {:.0} GFLOPS (유지율 {:.0}%)", peak, min, ret);
+        println!(
+            "성능: peak {:.0} · min {:.0} GFLOPS (유지율 {:.0}%)",
+            peak, min, ret
+        );
         println!(
             "유지율 판정: {}",
             if ret >= 90.0 {
@@ -268,58 +262,19 @@ pub fn run_thermal(seconds: u64, limit: f32) {
     }
 }
 
-fn run_workload_single<F: Fn() -> T, T>(f: F) -> Duration {
-    let start = Instant::now();
-    f();
-    start.elapsed()
-}
-
-fn run_workload_multi<F: Fn() -> T + Sync, T: Send>(f: F, threads: usize) -> Duration {
-    let start = Instant::now();
-    thread::scope(|s| {
-        for _ in 0..threads {
-            s.spawn(|| f());
-        }
-    });
-    start.elapsed()
-}
-
-fn score_from(duration: Duration, work_units: f64) -> f64 {
-    work_units / duration.as_secs_f64()
-}
-
 pub fn run_cpu() {
-    let cores = available_cores();
+    let report = velox_core::benchmark::CpuBenchmarkReport::run();
     println!("=== APEX Velox — benchmark cpu ===");
-    println!("Logical cores: {}\n", cores);
-
+    println!("Logical cores: {}\n", report.logical_cores);
     println!("-- Single-thread --");
-    let t = run_workload_single(|| sieve_count(PRIME_LIMIT));
-    let single_prime_score = score_from(t, PRIME_LIMIT as f64) / 1_000_000.0;
-    println!("Prime sieve ({} numbers): {:.2?}  ->  {:.2} M ops/sec", PRIME_LIMIT, t, single_prime_score);
-
-    let t = run_workload_single(|| matmul(MATMUL_N));
-    let flops = 2.0 * (MATMUL_N as f64).powi(3);
-    let single_matmul_gflops = flops / t.as_secs_f64() / 1e9;
-    println!("Matrix multiply ({0}x{0}): {1:.2?}  ->  {2:.2} GFLOPS", MATMUL_N, t, single_matmul_gflops);
-
-    println!("\n-- Multi-thread ({} threads) --", cores);
-    let t = run_workload_multi(|| sieve_count(PRIME_LIMIT), cores);
-    let multi_prime_score = score_from(t, PRIME_LIMIT as f64 * cores as f64) / 1_000_000.0;
-    println!("Prime sieve x{}: {:.2?}  ->  {:.2} M ops/sec  ({:.1}x scaling)", cores, t, multi_prime_score, multi_prime_score / single_prime_score);
-
-    let t = run_workload_multi(|| matmul(MATMUL_N), cores);
-    let multi_matmul_gflops = flops * cores as f64 / t.as_secs_f64() / 1e9;
-    println!("Matrix multiply x{}: {:.2?}  ->  {:.2} GFLOPS  ({:.1}x scaling)", cores, t, multi_matmul_gflops, multi_matmul_gflops / single_matmul_gflops);
-
-    // APEX 점수 — 레퍼런스(개발 머신)의 싱글 합성점수를 10000점으로 앵커.
-    // 다른 CPU 점수 = (그 CPU 합성점수 / REF) × 10000 → 내 PC 대비 상대 성능.
-    const REF_SINGLE: f64 = 380.0; // 태경 PC 싱글 합성(prime M ops/s + matmul GFLOPS) 기준
-    let single_composite = single_prime_score + single_matmul_gflops;
-    let multi_composite = multi_prime_score + multi_matmul_gflops;
+    println!("Prime sieve: {:.2} M ops/sec", report.single_prime_mops);
+    println!("Matrix multiply: {:.2} GFLOPS", report.single_matmul_gflops);
+    println!("\n-- Multi-thread --");
+    println!("Prime sieve: {:.2} M ops/sec", report.multi_prime_mops);
+    println!("Matrix multiply: {:.2} GFLOPS", report.multi_matmul_gflops);
     println!("\n-- APEX score (내 PC = 싱글 10000 기준) --");
-    println!("Single-core: {:.0}", single_composite / REF_SINGLE * 10000.0);
-    println!("Multi-core:  {:.0}", multi_composite / REF_SINGLE * 10000.0);
+    println!("Single-core: {:.0}", report.single_score);
+    println!("Multi-core:  {:.0}", report.multi_score);
 }
 
 pub fn run_gpu_monitor(seconds: u64) {
@@ -339,9 +294,21 @@ pub fn run_gpu_monitor(seconds: u64) {
             let max = |v: &[f64]| v.iter().cloned().fold(f64::MIN, f64::max);
 
             println!("Samples: {}", stats.len());
-            println!("Utilization: avg {:.1}%  peak {:.1}%", avg(&utils), max(&utils));
-            println!("Temperature: avg {:.1}°C  peak {:.1}°C", avg(&temps), max(&temps));
-            println!("VRAM used:   avg {:.0} MiB  peak {:.0} MiB", avg(&mems), max(&mems));
+            println!(
+                "Utilization: avg {:.1}%  peak {:.1}%",
+                avg(&utils),
+                max(&utils)
+            );
+            println!(
+                "Temperature: avg {:.1}°C  peak {:.1}°C",
+                avg(&temps),
+                max(&temps)
+            );
+            println!(
+                "VRAM used:   avg {:.0} MiB  peak {:.0} MiB",
+                avg(&mems),
+                max(&mems)
+            );
         }
         _ => println!("nvidia-smi not available on this system."),
     }
@@ -355,8 +322,8 @@ pub fn run_everyday() {
 }
 
 fn run_compress() {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::io::Write;
 
     let size = 64 * 1024 * 1024;
@@ -375,7 +342,12 @@ fn run_compress() {
 
     let throughput = (size as f64 / 1024.0 / 1024.0) / elapsed.as_secs_f64();
     println!("-- File compression (64 MB, gzip) --");
-    println!("Time: {:.2?}  ->  {:.1} MB/s  (compressed to {:.1} MB)", elapsed, throughput, compressed.len() as f64 / 1024.0 / 1024.0);
+    println!(
+        "Time: {:.2?}  ->  {:.1} MB/s  (compressed to {:.1} MB)",
+        elapsed,
+        throughput,
+        compressed.len() as f64 / 1024.0 / 1024.0
+    );
 }
 
 fn run_image() {
@@ -389,14 +361,25 @@ fn run_image() {
     let iterations = 10;
     let start = Instant::now();
     for _ in 0..iterations {
-        let resized = image::imageops::resize(&img, w / 4, h / 4, image::imageops::FilterType::Lanczos3);
+        let resized =
+            image::imageops::resize(&img, w / 4, h / 4, image::imageops::FilterType::Lanczos3);
         let mut buf = Vec::new();
         resized
-            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+            .write_to(
+                &mut std::io::Cursor::new(&mut buf),
+                image::ImageFormat::Jpeg,
+            )
             .unwrap();
     }
     let elapsed = start.elapsed();
 
-    println!("-- Image resize + JPEG encode (4000x3000 -> 1000x750, x{}) --", iterations);
-    println!("Time: {:.2?}  ->  {:.2} images/sec", elapsed, iterations as f64 / elapsed.as_secs_f64());
+    println!(
+        "-- Image resize + JPEG encode (4000x3000 -> 1000x750, x{}) --",
+        iterations
+    );
+    println!(
+        "Time: {:.2?}  ->  {:.2} images/sec",
+        elapsed,
+        iterations as f64 / elapsed.as_secs_f64()
+    );
 }

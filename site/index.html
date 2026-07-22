@@ -71,19 +71,6 @@
 <body>
 
 <div id="gate"><div class="box">
-  <div id="login-view">
-    <h1 style="font-size:42px;margin:0 0 6px">환영합니다</h1>
-    <p class="lede muted" style="margin:0 0 26px">APEX Velox</p>
-    <button class="btn ghost" onclick="socialLogin('Google')" style="width:100%;border:.5px solid var(--line);color:var(--fg);margin-bottom:8px">Continue with Google</button>
-    <button class="btn ghost" onclick="socialLogin('X')" style="width:100%;border:.5px solid var(--line);color:var(--fg);margin-bottom:8px">Continue with X</button>
-    <button class="btn ghost" onclick="socialLogin('GitHub')" style="width:100%;border:.5px solid var(--line);color:var(--fg)">Continue with GitHub</button>
-    <div class="muted" style="font-size:12px;margin:18px 0 10px">— 또는 마스터키 —</div>
-    <input id="login-id" placeholder="아이디" autocomplete="off" style="margin-bottom:10px">
-    <input id="login-pw" type="password" placeholder="비밀번호">
-    <button class="btn" onclick="doLogin()" style="width:100%;margin-top:18px">로그인</button>
-    <div id="login-msg" style="font-size:13px;color:#e24b4a;margin-top:12px;min-height:18px"></div>
-    <p style="font-size:12px" class="muted">에디터용 마스터키 — admin0108 / admin0108 (배포판 제거)</p>
-  </div>
   <div id="name-view" style="display:none">
     <h1 style="font-size:32px;margin:0 0 8px">이 PC의 이름은?</h1>
     <p class="lede muted" style="margin:0 0 18px">감지된 스펙</p>
@@ -121,6 +108,12 @@
       <button class="btn" onclick="diagnoseChat()">진단 시작 · live</button>
       <button class="btn ghost" id="diag-cancel" style="display:none" onclick="cancelDiag()">진단 취소</button>
     </div>
+    <label class="muted" style="font-size:13px">이 AI에게 보낼 시스템 데이터</label>
+    <select id="ai-scope" style="margin:6px 0 20px;max-width:360px">
+      <option value="minimal">최소 — 사용률·온도·전원 모드</option>
+      <option value="system">시스템 — CPU·RAM·OS·GPU 포함</option>
+      <option value="drivers">드라이버 — 장치명과 버전까지 포함</option>
+    </select>
     <div id="chat"></div>
   </section>
 
@@ -128,7 +121,7 @@
     <h2>Benchmark</h2>
     <p class="rsub">성능 측정 · 키 없이 됩니다 (몇 초 소요).</p>
     <div class="btnrow">
-      <button class="btn" onclick="runCmd('bench','CPU 벤치','bench-out')">CPU bench</button>
+      <button class="btn" onclick="runBenchmark()">CPU bench</button>
       <button class="btn ghost" onclick="runCmd('gpu','GPU 상태','bench-out')">GPU status</button>
     </div>
     <pre id="bench-out" style="display:none"></pre>
@@ -162,7 +155,7 @@
     <p class="rsub">API 키 · 업데이트 · 버전.</p>
     <div class="keys" style="max-width:440px;margin-bottom:36px">
       <div style="font-size:13px;font-weight:500;margin-bottom:4px">API keys</div>
-      <p class="muted" style="font-size:13px;margin:0 0 6px">로컬에만 저장(.env) · doctor/diagnose에 사용.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 6px">Windows Credential Manager에 암호화 저장 · 값은 UI/API에 다시 표시하지 않습니다.</p>
       <label>Anthropic (Claude)</label><input type="password" id="k-claude" placeholder="sk-ant-…">
       <label>OpenAI (GPT)</label><input type="password" id="k-gpt" placeholder="sk-…">
       <button class="btn" onclick="saveKeys()" style="width:100%;margin-top:20px">Save &amp; confirm</button>
@@ -230,18 +223,12 @@ function startSite(){ document.getElementById('site').style.display='block'; }
 /* ---------- APP MODE ---------- */
 function startApp(){
   document.getElementById('app').style.display='block';
-  if(sessionStorage.getItem('apex_auth')){ afterAuth(); } else { document.getElementById('gate').style.display='flex'; }
+  afterLogin();
 }
-function doLogin(){
-  var id=(val('login-id')||'').trim(), pw=val('login-pw')||'';
-  if(id==='admin0108'&&pw==='admin0108'){ sessionStorage.setItem('apex_auth','1'); afterLogin(); }
-  else { document.getElementById('login-msg').textContent='아이디 또는 비밀번호가 틀렸습니다.'; }
-}
-function socialLogin(n){ document.getElementById('login-msg').textContent=n+' 로그인은 곧 추가됩니다 — 지금은 마스터키로 진행하세요.'; }
 function afterLogin(){
   fetch('/profile').then(j).then(function(p){
     if(p&&p.pc_name){ closeGate(p.pc_name); return; }
-    show('login-view',false); show('name-view',true);
+    document.getElementById('gate').style.display='flex'; show('name-view',true);
     fetch('/snapshot').then(j).then(function(s){
       document.getElementById('name-spec').textContent=
         'CPU        '+s.system.cpu_model+' ('+s.system.logical_cores+'코어)\n'+
@@ -264,9 +251,10 @@ function showRoom(r){
 }
 
 function refreshLive(){
-  fetch('/snapshot').then(j).then(function(s){
+  fetch('/report/health').then(j).then(function(report){ var s=report.snapshot;
     var t=s.max_temp_c, hEl=document.getElementById('health');
-    if(hEl) hEl.textContent=(t!=null&&t>=85?'⚠ 온도 높음':'✓ 정상')+' · CPU '+s.cpu_usage.toFixed(0)+'% · 드라이버 '+(s.drivers||[]).length+'개';
+    var severe=(report.findings||[]).some(function(f){return f.severity==='critical'||f.severity==='warning';});
+    if(hEl) hEl.textContent=(severe?'⚠ 확인 필요':'✓ 정상')+' · CPU '+s.cpu_usage.toFixed(0)+'% · 드라이버 '+(s.drivers||[]).length+'개';
     var gpus=(s.gpus||[]).map(function(g){return '<div class="gpu"><div class="n">'+esc(g.name)+'</div><div class="v">v'+esc(g.driver_version)+'</div></div>';}).join('')||'<span class="muted">—</span>';
     document.getElementById('live').innerHTML=
       card('System',row('CPU',esc(s.system.cpu_model))+row('Cores',s.system.logical_cores)+row('RAM',s.system.ram_total_mb+' MB')+row('OS',esc(s.system.os)))+
@@ -274,6 +262,15 @@ function refreshLive(){
       card('GPU drivers',gpus)+
       card('Drivers','<div class="big">'+(s.drivers||[]).length+'</div><div class="muted" style="font-size:13px">installed</div>');
   }).catch(noop);
+}
+
+function runBenchmark(){
+  var out=document.getElementById('bench-out'); out.style.display='block'; out.textContent='CPU 벤치마크 실행 중…';
+  fetch('/report/benchmark',{method:'POST'}).then(j).then(function(r){
+    out.textContent='APEX CPU Benchmark v'+r.version+'\n\nLogical cores: '+r.logical_cores+
+      '\nSingle-core score: '+Math.round(r.single_score)+'\nMulti-core score:  '+Math.round(r.multi_score)+
+      '\n\nSingle: '+r.single_matmul_gflops.toFixed(2)+' GFLOPS\nMulti:  '+r.multi_matmul_gflops.toFixed(2)+' GFLOPS';
+  }).catch(function(){out.textContent='벤치마크 실행 실패.';});
 }
 function card(t,inner){ return '<div class="card"><h3>'+t+'</h3>'+inner+'</div>'; }
 function row(k,v){ return '<div class="r"><span>'+k+'</span><b>'+v+'</b></div>'; }
@@ -309,7 +306,8 @@ function diagnoseChat(){
   var think=function(label){ rm(); thinking=el('div','bubble ai'); thinking.appendChild(el('div','who',label)); var d=el('div','dots','● ● ●'); thinking.appendChild(d); chat.appendChild(thinking); thinking.scrollIntoView({block:'nearest'}); };
   var next={'시스템':'Customer · Claude 생각 중','Customer · Claude':'Engineer · GPT 생각 중'};
   add('진단 시작','AI 2명을 소집합니다…','sys'); think('시스템 읽는 중');
-  var es=new EventSource('/diagnose/stream'); currentES=es;
+  var scope=val('ai-scope')||'minimal';
+  var es=new EventSource('/diagnose/stream?scope='+encodeURIComponent(scope)); currentES=es;
   es.onmessage=function(e){ var m; try{m=JSON.parse(e.data);}catch(_){return;} rm();
     if(m.who==='done'){ add('완료',m.text,'done'); es.close(); fin(); return; }
     add(m.who,m.text,m.who==='시스템'?'sys':'ai'); if(next[m.who]) think(next[m.who]); };
@@ -322,7 +320,7 @@ function saveKeys(){
   var n=Object.keys(body).filter(function(p){return body[p]&&body[p].trim();}).length;
   if(!n){ st.textContent='키를 하나 이상 입력하세요.'; return; }
   st.textContent='Saving…';
-  fetch('/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(j).then(function(res){ st.textContent='✓ '+res.saved+' key(s) saved (local · gitignored)'; ['k-claude','k-gpt'].forEach(function(i){document.getElementById(i).value='';}); refreshKeyStatus(); }).catch(function(){ st.textContent='저장 실패.'; });
+  fetch('/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(j).then(function(res){ st.textContent=res.errors&&res.errors.length?'일부 저장 실패':'✓ '+res.saved+' key(s) secured in Windows Credential Manager'; ['k-claude','k-gpt'].forEach(function(i){document.getElementById(i).value='';}); refreshKeyStatus(); }).catch(function(){ st.textContent='저장 실패.'; });
 }
 function refreshKeyStatus(){ fetch('/keys/status').then(j).then(function(st){ if(st.claude)document.getElementById('k-claude').placeholder='•••••••• configured'; if(st.gpt)document.getElementById('k-gpt').placeholder='•••••••• configured'; }).catch(noop); }
 function checkUpdate(){ var st=document.getElementById('update-status'),link=document.getElementById('update-link');

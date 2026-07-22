@@ -1,31 +1,33 @@
-mod chorus;
-mod thermals;
-mod gpu;
 mod bench;
-mod fps;
-mod diagnose;
-mod snapshot;
-mod compare;
 mod checkpoint;
+mod chorus;
+mod compare;
 mod daemon;
 mod dashboard;
-mod drivers;
+mod diagnose;
 mod doctor;
-mod tempcheck;
+mod drivers;
+mod fps;
 mod fpscheck;
+mod gpu;
+mod snapshot;
+mod tempcheck;
+mod thermals;
 mod timeline;
 
-use dotenv::dotenv;
 use clap::{Parser, Subcommand};
+use dotenv::dotenv;
 
 #[derive(Parser)]
 #[command(name = "velox")]
 #[command(version)]
 #[command(about = "APEX Velox — Windows 시스템 진단 + 멀티 AI 오케스트레이터 CLI")]
-#[command(long_about = "APEX Velox — 시스템을 읽고(성능·온도·드라이버·스냅샷) AI가 안전하게 진단/조치하는 Windows CLI.\n\n\
+#[command(
+    long_about = "APEX Velox — 시스템을 읽고(성능·온도·드라이버·스냅샷) AI가 안전하게 진단/조치하는 Windows CLI.\n\n\
 키 없이 동작: info · snapshot · compare · bench · gpu · thermals · drivers · timeline\n\
 API 키 필요: doctor · diagnose · chorus  (설정: velox chorus set <provider> <key>)\n\
-일부 센서/ETW 기능은 관리자 권한이 필요합니다.")]
+일부 센서/ETW 기능은 관리자 권한이 필요합니다."
+)]
 #[command(propagate_version = true)]
 #[command(arg_required_else_help = true)]
 struct Cli {
@@ -98,10 +100,7 @@ enum Commands {
         out: Option<String>,
     },
     /// 두 스냅샷(JSON 파일) 비교 — 드라이버/하드웨어 등 구조 변화만 (순간값 무시)
-    Compare {
-        old: String,
-        new: String,
-    },
+    Compare { old: String, new: String },
     /// 정상 상태 저장/복원 (블루스크린·AI 오판 후 되돌리기)
     Checkpoint {
         #[command(subcommand)]
@@ -188,10 +187,7 @@ enum ChorusCommands {
     /// 연결된 AI 목록 + 키 상태
     Models,
     /// API 키 직접 입력·저장 (.env): chorus set <provider> <key>
-    Set {
-        provider: String,
-        key: String,
-    },
+    Set { provider: String, key: String },
     /// 커스텀 AI provider 추가 (OpenAI 호환): chorus add <name> <base_url> <model> [key]
     Add {
         name: String,
@@ -208,9 +204,7 @@ enum ChorusCommands {
         hard: bool,
     },
     /// AI 합의 — 같은 질문을 여러 모델에 → 공통점/차이 정리: chorus consensus "질문"
-    Consensus {
-        question: String,
-    },
+    Consensus { question: String },
 }
 
 #[tokio::main]
@@ -270,7 +264,11 @@ async fn main() {
         Commands::Dashboard => dashboard::run().await,
         Commands::Daemon { interval, auto } => daemon::run(interval, auto).await,
         Commands::Chorus { action } => match action {
-            ChorusCommands::Ask { prompt, use_model, no_context } => {
+            ChorusCommands::Ask {
+                prompt,
+                use_model,
+                no_context,
+            } => {
                 let (model, auto) = match use_model {
                     Some(m) => (m, false),
                     None => (velox_core::ai::route_semantic(&prompt).await, true),
@@ -286,9 +284,12 @@ async fn main() {
                 chorus::show_models();
             }
             ChorusCommands::Set { provider, key } => chorus::set_key(&provider, &key),
-            ChorusCommands::Add { name, base_url, model, key } => {
-                chorus::add_provider(&name, &base_url, &model, &key)
-            }
+            ChorusCommands::Add {
+                name,
+                base_url,
+                model,
+                key,
+            } => chorus::add_provider(&name, &base_url, &model, &key),
             ChorusCommands::Test => chorus::test_all().await,
             ChorusCommands::Bench { hard } => chorus::bench(hard).await,
             ChorusCommands::Consensus { question } => chorus::consensus(&question).await,
@@ -311,7 +312,7 @@ fn run_info() {
 
     #[derive(Deserialize, Debug)]
     #[serde(rename = "Win32_VideoController")]
-    struct GPU {
+    struct Gpu {
         #[serde(rename = "Name")]
         name: String,
     }
@@ -338,7 +339,7 @@ fn run_info() {
         println!("시스템 정보 조회 실패: COM 초기화 불가.");
         return;
     };
-    let Ok(wmi) = WMIConnection::new(com.clone()) else {
+    let Ok(wmi) = WMIConnection::new(com) else {
         println!("시스템 정보 조회 실패: WMI 연결 불가.");
         return;
     };
@@ -354,7 +355,7 @@ fn run_info() {
 
     println!();
 
-    let gpus: Vec<GPU> = wmi.query().unwrap_or_default();
+    let gpus: Vec<Gpu> = wmi.query().unwrap_or_default();
     if gpus.is_empty() {
         println!("GPU:    조회 실패 또는 없음");
     }

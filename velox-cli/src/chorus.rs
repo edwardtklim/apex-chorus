@@ -1,57 +1,14 @@
-use reqwest::Client;
-use velox_core::ai::{env_var_for, load_providers, query_text_with, save_providers, ProviderConfig, PROVIDERS_FILE};
-use serde_json::json;
-use std::env;
-use sysinfo::System;
-
+use velox_core::ai::{
+    PROVIDERS_FILE, ProviderConfig, env_var_for, has_key, load_providers, query_text_with,
+    save_providers,
+};
 
 fn get_system_context() -> String {
-    use serde::Deserialize;
-    use wmi::{COMLibrary, WMIConnection};
-
-    #[derive(Deserialize, Debug)]
-    #[serde(rename = "Win32_Battery")]
-    struct Battery {
-        #[serde(rename = "EstimatedChargeRemaining")]
-        charge: u32,
-    }
-
-    #[derive(Deserialize, Debug)]
-    #[serde(rename = "Win32_VideoController")]
-    struct GPU {
-        #[serde(rename = "Name")]
-        name: String,
-    }
-
-    let mut sys = System::new_all();
-    sys.refresh_all();
-
-    let cpu_usage: f32 = sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>()
-        / sys.cpus().len() as f32;
-
-    let total_mem = sys.total_memory() / 1024 / 1024;
-    let used_mem = sys.used_memory() / 1024 / 1024;
-    let mem_percent = (used_mem as f32 / total_mem as f32) * 100.0;
-
-    let mut context = format!(
-        "[System Context]\nCPU Usage: {:.1}%\nMemory: {}MB / {}MB ({:.1}%)\n",
-        cpu_usage, used_mem, total_mem, mem_percent
-    );
-
-    if let Ok(com) = COMLibrary::new() {
-        if let Ok(wmi_con) = WMIConnection::new(com) {
-            let gpus: Vec<GPU> = wmi_con.query().unwrap_or_default();
-            for gpu in &gpus {
-                context.push_str(&format!("GPU: {}\n", gpu.name));
-            }
-            let batteries: Vec<Battery> = wmi_con.query().unwrap_or_default();
-            if !batteries.is_empty() {
-                context.push_str(&format!("Battery: {}%\n", batteries[0].charge));
-            }
-        }
-    }
-
-    context
+    velox_core::privacy::AiContext::from_snapshot(
+        &velox_core::snapshot::Snapshot::collect(),
+        velox_core::privacy::ContextScope::Minimal,
+    )
+    .to_prompt_json()
 }
 
 pub async fn ask(prompt: &str, model: &str, no_context: bool) {
@@ -73,10 +30,10 @@ pub async fn ask(prompt: &str, model: &str, no_context: bool) {
     }
 
     let fallback_order: Vec<&str> = match model {
-        "gpt"    => vec!["gpt",    "claude", "grok", "gemini"],
-        "gemini" => vec!["gemini", "claude", "gpt",  "grok"],
-        "grok"   => vec!["grok",   "claude", "gpt",  "gemini"],
-        _        => vec!["claude", "gpt",    "grok", "gemini"],
+        "gpt" => vec!["gpt", "claude", "grok", "gemini"],
+        "gemini" => vec!["gemini", "claude", "gpt", "grok"],
+        "grok" => vec!["grok", "claude", "gpt", "gemini"],
+        _ => vec!["claude", "gpt", "grok", "gemini"],
     };
 
     for (i, m) in fallback_order.iter().enumerate() {
@@ -84,10 +41,10 @@ pub async fn ask(prompt: &str, model: &str, no_context: bool) {
             println!("⚠ Falling back to: {}\n", m);
         }
         let success = match *m {
-            "gpt"    => try_gpt(&full_prompt).await,
+            "gpt" => try_gpt(&full_prompt).await,
             "gemini" => try_gemini(&full_prompt).await,
-            "grok"   => try_grok(&full_prompt).await,
-            _        => try_claude(&full_prompt).await,
+            "grok" => try_grok(&full_prompt).await,
+            _ => try_claude(&full_prompt).await,
         };
         if success {
             return;
@@ -98,145 +55,55 @@ pub async fn ask(prompt: &str, model: &str, no_context: bool) {
 }
 
 async fn try_claude(prompt: &str) -> bool {
-    let api_key = match env::var("ANTHROPIC_API_KEY") {
-        Ok(k) => k,
-        Err(_) => { println!("✗ Claude: ANTHROPIC_API_KEY not set"); return false; }
-    };
     println!("Asking Claude...\n");
-    let client = Client::new();
-    let res = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", &api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&json!({
-            "model": "claude-sonnet-4-5",
-            "max_tokens": 1024,
-            "messages": [{ "role": "user", "content": prompt }]
-        }))
-        .send().await;
-
-    match res {
-        Ok(r) => {
-            let body: serde_json::Value = r.json().await.unwrap_or_default();
-            if let Some(text) = body["content"][0]["text"].as_str() {
-                println!("{}", text);
-                true
-            } else {
-                println!("✗ Claude error: {:?}", body["error"]["message"]);
-                false
-            }
-        }
-        Err(e) => { println!("✗ Claude request failed: {}", e); false }
-    }
+    print_reply("claude", prompt).await
 }
 
 async fn try_gpt(prompt: &str) -> bool {
-    let api_key = match env::var("OPENAI_API_KEY") {
-        Ok(k) => k,
-        Err(_) => { println!("✗ GPT: OPENAI_API_KEY not set"); return false; }
-    };
     println!("Asking GPT...\n");
-    let client = Client::new();
-    let res = client
-        .post("https://api.openai.com/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("content-type", "application/json")
-        .json(&json!({
-            "model": "gpt-4o",
-            "max_tokens": 1024,
-            "messages": [{ "role": "user", "content": prompt }]
-        }))
-        .send().await;
-
-    match res {
-        Ok(r) => {
-            let body: serde_json::Value = r.json().await.unwrap_or_default();
-            if let Some(text) = body["choices"][0]["message"]["content"].as_str() {
-                println!("{}", text);
-                true
-            } else {
-                println!("✗ GPT error: {:?}", body["error"]["message"]);
-                false
-            }
-        }
-        Err(e) => { println!("✗ GPT request failed: {}", e); false }
-    }
+    print_reply("gpt", prompt).await
 }
 
 async fn try_gemini(prompt: &str) -> bool {
-    let api_key = match env::var("GEMINI_API_KEY") {
-        Ok(k) => k,
-        Err(_) => { println!("✗ Gemini: GEMINI_API_KEY not set"); return false; }
-    };
     println!("Asking Gemini...\n");
-    let client = Client::new();
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
-        api_key
-    );
-    let res = client
-        .post(&url)
-        .header("content-type", "application/json")
-        .json(&json!({
-            "contents": [{ "parts": [{ "text": prompt }] }]
-        }))
-        .send().await;
-
-    match res {
-        Ok(r) => {
-            let body: serde_json::Value = r.json().await.unwrap_or_default();
-            if let Some(text) = body["candidates"][0]["content"]["parts"][0]["text"].as_str() {
-                println!("{}", text);
-                true
-            } else {
-                println!("✗ Gemini error: {:?}", body["error"]["message"]);
-                false
-            }
-        }
-        Err(e) => { println!("✗ Gemini request failed: {}", e); false }
-    }
+    print_reply("gemini", prompt).await
 }
 
 async fn try_grok(prompt: &str) -> bool {
-    let api_key = match env::var("GROK_API_KEY") {
-        Ok(k) => k,
-        Err(_) => { println!("✗ Grok: GROK_API_KEY not set"); return false; }
-    };
     println!("Asking Grok...\n");
-    let client = Client::new();
-    let res = client
-        .post("https://api.x.ai/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("content-type", "application/json")
-        .json(&json!({
-            "model": "grok-3",
-            "max_tokens": 1024,
-            "messages": [{ "role": "user", "content": prompt }]
-        }))
-        .send().await;
+    print_reply("grok", prompt).await
+}
 
-    match res {
-        Ok(r) => {
-            let body: serde_json::Value = r.json().await.unwrap_or_default();
-            if let Some(text) = body["choices"][0]["message"]["content"].as_str() {
-                println!("{}", text);
-                true
-            } else {
-                println!("✗ Grok error: {:?}", body["error"]["message"]);
-                false
-            }
+async fn print_reply(provider: &str, prompt: &str) -> bool {
+    match query_text_with(provider, prompt).await {
+        Some(text) => {
+            println!("{}", text);
+            true
         }
-        Err(e) => { println!("✗ Grok request failed: {}", e); false }
+        None => {
+            println!("✗ {} request failed — key/network/model check", provider);
+            false
+        }
     }
 }
 
-
 /// 커스텀 provider 추가. `velox chorus add <name> <base_url> <model> [key]`
 pub fn add_provider(name: &str, base_url: &str, model: &str, key: &str) {
-    let builtin = ["claude", "gpt", "gemini", "grok", "anthropic", "openai", "google", "xai"];
+    let builtin = [
+        "claude",
+        "gpt",
+        "gemini",
+        "grok",
+        "anthropic",
+        "openai",
+        "google",
+        "xai",
+    ];
     if builtin.contains(&name.to_lowercase().as_str()) {
-        println!("✗ '{}'는 내장 provider 이름이라 못 써요. 다른 이름으로.", name);
+        println!(
+            "✗ '{}'는 내장 provider 이름이라 못 써요. 다른 이름으로.",
+            name
+        );
         return;
     }
     let mut ps = load_providers();
@@ -248,7 +115,10 @@ pub fn add_provider(name: &str, base_url: &str, model: &str, key: &str) {
         api_key: key.to_string(),
     });
     if save_providers(&ps) {
-        println!("✓ 커스텀 provider 추가됨: {} ({} / {})", name, base_url, model);
+        println!(
+            "✓ 커스텀 provider 추가됨: {} ({} / {})",
+            name, base_url, model
+        );
         println!("  사용: velox chorus ask \"...\" --use {}", name);
         println!("  (저장: {})", PROVIDERS_FILE);
     } else {
@@ -256,38 +126,21 @@ pub fn add_provider(name: &str, base_url: &str, model: &str, key: &str) {
     }
 }
 
-
-/// 사용자가 직접 API 키를 입력해 저장 (.env). `velox chorus set <provider> <key>`
+/// 사용자가 직접 API 키를 OS 보안 저장소에 저장.
 pub fn set_key(provider: &str, key: &str) {
     let var = match env_var_for(provider) {
         Some(v) => v,
         None => {
-            println!("✗ 알 수 없는 provider: {} (claude / gpt / gemini / grok)", provider);
+            println!(
+                "✗ 알 수 없는 provider: {} (claude / gpt / gemini / grok)",
+                provider
+            );
             return;
         }
     };
-    let path = ".env";
-    let mut lines: Vec<String> = std::fs::read_to_string(path)
-        .map(|s| s.lines().map(|l| l.to_string()).collect())
-        .unwrap_or_default();
-
-    let prefix = format!("{}=", var);
-    let mut found = false;
-    for l in lines.iter_mut() {
-        if l.trim_start().starts_with(&prefix) {
-            *l = format!("{}={}", var, key);
-            found = true;
-        }
-    }
-    if !found {
-        lines.push(format!("{}={}", var, key));
-    }
-
-    match std::fs::write(path, lines.join("\n") + "\n") {
-        Ok(_) => {
-            println!("✓ {} ({}) 키 저장됨 → .env (다음 실행부터 적용)", provider, var);
-        }
-        Err(e) => println!("✗ .env 쓰기 실패: {}", e),
+    match velox_core::credentials::set(provider, key) {
+        Ok(()) => println!("✓ {} ({}) 키 저장됨 → OS 보안 저장소", provider, var),
+        Err(e) => println!("✗ 키 저장 실패: {}", e),
     }
 }
 
@@ -296,8 +149,11 @@ pub async fn test_all() {
     println!("=== APEX Chorus — 연결 테스트 ===\n");
     for p in ["claude", "gpt", "gemini", "grok"] {
         let var = env_var_for(p).unwrap();
-        if env::var(var).is_err() {
-            println!("✗ {:8} 키 없음 ({}) — `velox chorus set {} <key>`", p, var, p);
+        if !has_key(p) {
+            println!(
+                "✗ {:8} 키 없음 ({}) — `velox chorus set {} <key>`",
+                p, var, p
+            );
             continue;
         }
         let t = std::time::Instant::now();
@@ -311,7 +167,9 @@ pub async fn test_all() {
     }
     for p in load_providers() {
         let t = std::time::Instant::now();
-        let ok = query_text_with(&p.name, "Reply with exactly: OK").await.is_some();
+        let ok = query_text_with(&p.name, "Reply with exactly: OK")
+            .await
+            .is_some();
         let ms = t.elapsed().as_millis();
         if ok {
             println!("✓ {:8} (커스텀) 응답 정상 ({}ms)", p.name, ms);
@@ -325,7 +183,13 @@ pub async fn test_all() {
 fn parse_score(s: &str) -> Option<f64> {
     let cleaned: String = s
         .chars()
-        .map(|c| if c.is_ascii_digit() || c == '.' { c } else { ' ' })
+        .map(|c| {
+            if c.is_ascii_digit() || c == '.' {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect();
     cleaned
         .split_whitespace()
@@ -339,17 +203,41 @@ fn parse_score(s: &str) -> Option<f64> {
 fn prompt_set(hard: bool) -> Vec<(&'static str, &'static str)> {
     if hard {
         vec![
-            ("코딩", "Write a Rust function `longest_palindrome(s: &str) -> String` returning the longest palindromic substring. Code only, correct and efficient."),
-            ("추론", "A bat and a ball cost $1.10 total. The bat costs $1.00 more than the ball. How much is the ball? Show your reasoning."),
-            ("수학", "What is the remainder when 7^100 is divided by 13? Show the key step."),
-            ("지식", "In exactly 2 sentences, explain why TCP uses a three-way handshake instead of a two-way one."),
-            ("글쓰기", "Write one haiku (5-7-5 syllables) about a compiler error. Output only the haiku."),
+            (
+                "코딩",
+                "Write a Rust function `longest_palindrome(s: &str) -> String` returning the longest palindromic substring. Code only, correct and efficient.",
+            ),
+            (
+                "추론",
+                "A bat and a ball cost $1.10 total. The bat costs $1.00 more than the ball. How much is the ball? Show your reasoning.",
+            ),
+            (
+                "수학",
+                "What is the remainder when 7^100 is divided by 13? Show the key step.",
+            ),
+            (
+                "지식",
+                "In exactly 2 sentences, explain why TCP uses a three-way handshake instead of a two-way one.",
+            ),
+            (
+                "글쓰기",
+                "Write one haiku (5-7-5 syllables) about a compiler error. Output only the haiku.",
+            ),
         ]
     } else {
         vec![
-            ("코딩", "Write a Rust function `fib(n: u64) -> u64` returning the nth Fibonacci number. Code only."),
-            ("추론", "A train travels 60 km in 45 minutes. What is its speed in km/h?"),
-            ("지식", "In one sentence, what is the key difference between TCP and UDP?"),
+            (
+                "코딩",
+                "Write a Rust function `fib(n: u64) -> u64` returning the nth Fibonacci number. Code only.",
+            ),
+            (
+                "추론",
+                "A train travels 60 km in 45 minutes. What is its speed in km/h?",
+            ),
+            (
+                "지식",
+                "In one sentence, what is the key difference between TCP and UDP?",
+            ),
         ]
     }
 }
@@ -358,26 +246,32 @@ fn prompt_set(hard: bool) -> Vec<(&'static str, &'static str)> {
 /// 측정: 점수(카테고리별), 속도(지연), 처리량(chars/s), 크기(응답 길이).
 /// `velox chorus bench [--judge <model>] [--hard]`
 pub async fn bench(hard: bool) {
-    println!("=== APEX Chorus — AI 모델 벤치 (다중 심판, 0~1000{}) ===", if hard { ", HARD" } else { "" });
+    println!(
+        "=== APEX Chorus — AI 모델 벤치 (다중 심판, 0~1000{}) ===",
+        if hard { ", HARD" } else { "" }
+    );
 
     let prompts = prompt_set(hard);
 
     // 심판 패널 = 키 있는 내장 모델. 자기 답은 자기가 채점 안 함 → self-bias 제거.
     let panel: Vec<String> = ["claude", "gpt", "gemini", "grok"]
         .iter()
-        .filter(|m| env_var_for(m).map(|v| env::var(v).is_ok()).unwrap_or(false))
+        .filter(|m| has_key(m))
         .map(|s| s.to_string())
         .collect();
     if panel.is_empty() {
         println!("심판으로 쓸 모델 없음 (키 필요).");
         return;
     }
-    println!("심판 패널: {} · 각 답을 자기 외 심판들이 0~1000 채점 → 평균\n", panel.join(", "));
+    println!(
+        "심판 패널: {} · 각 답을 자기 외 심판들이 0~1000 채점 → 평균\n",
+        panel.join(", ")
+    );
 
     // 대상 = 키 있는 내장 + 커스텀
     let mut models: Vec<String> = Vec::new();
     for m in ["claude", "gpt", "gemini", "grok"] {
-        if env_var_for(m).map(|v| env::var(v).is_ok()).unwrap_or(false) {
+        if has_key(m) {
             models.push(m.to_string());
         }
     }
@@ -432,15 +326,27 @@ pub async fn bench(hard: bool) {
             println!("  {} → {:.0}/1000 (심판 {}명)", cat, score, cnt);
             cat_scores.push(score);
         }
-        rows.push(Row { model: model.clone(), cat_scores, lat_ms: lat, len });
+        rows.push(Row {
+            model: model.clone(),
+            cat_scores,
+            lat_ms: lat,
+            len,
+        });
     }
 
     let np = prompts.len().max(1);
     let avg_score = |r: &Row| r.cat_scores.iter().sum::<f64>() / np as f64;
-    rows.sort_by(|a, b| avg_score(b).partial_cmp(&avg_score(a)).unwrap_or(std::cmp::Ordering::Equal));
+    rows.sort_by(|a, b| {
+        avg_score(b)
+            .partial_cmp(&avg_score(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     println!("\n=== 리더보드 (다중 심판 평균) ===");
-    println!("{:<12}{:>10}{:>9}{:>11}{:>9}", "모델", "점수/1000", "속도ms", "처리량c/s", "크기");
+    println!(
+        "{:<12}{:>10}{:>9}{:>11}{:>9}",
+        "모델", "점수/1000", "속도ms", "처리량c/s", "크기"
+    );
     println!("{}", "-".repeat(53));
     for r in &rows {
         let sc = avg_score(r);
@@ -451,7 +357,10 @@ pub async fn bench(hard: bool) {
         } else {
             0.0
         };
-        println!("{:<12}{:>10.0}{:>7}ms{:>11.0}{:>9}", r.model, sc, lat, thru, size);
+        println!(
+            "{:<12}{:>10.0}{:>7}ms{:>11.0}{:>9}",
+            r.model, sc, lat, thru, size
+        );
     }
 
     println!("\n=== 카테고리별 점수 (/1000) ===");
@@ -467,7 +376,9 @@ pub async fn bench(hard: bool) {
         }
         println!();
     }
-    println!("\n※ 자기 답은 자기가 채점 안 함 → self-bias 완화. 패널 공통 편향은 남음(상대 참고용).");
+    println!(
+        "\n※ 자기 답은 자기가 채점 안 함 → self-bias 완화. 패널 공통 편향은 남음(상대 참고용)."
+    );
 }
 
 /// AI 합의 — 같은 질문을 여러 모델에 → 공통점/차이를 종합. `velox chorus consensus "질문"`
@@ -476,7 +387,7 @@ pub async fn consensus(question: &str) {
 
     let mut models: Vec<String> = Vec::new();
     for m in ["claude", "gpt", "gemini", "grok"] {
-        if env_var_for(m).map(|v| env::var(v).is_ok()).unwrap_or(false) {
+        if has_key(m) {
             models.push(m.to_string());
         }
     }
@@ -525,7 +436,7 @@ pub async fn consensus(question: &str) {
          질문: {}\n\n{}",
         question, combined
     );
-    let synthesizer = if env_var_for("claude").map(|v| env::var(v).is_ok()).unwrap_or(false) {
+    let synthesizer = if has_key("claude") {
         "claude".to_string()
     } else {
         answers[0].0.clone()
@@ -540,15 +451,15 @@ pub async fn consensus(question: &str) {
 pub fn show_models() {
     let models = [
         ("claude", "ANTHROPIC_API_KEY", "Code / Architecture"),
-        ("gpt",    "OPENAI_API_KEY",    "Strategy / Business"),
-        ("gemini", "GEMINI_API_KEY",    "Docs / Analysis"),
-        ("grok",   "GROK_API_KEY",      "Search / Latest info"),
+        ("gpt", "OPENAI_API_KEY", "Strategy / Business"),
+        ("gemini", "GEMINI_API_KEY", "Docs / Analysis"),
+        ("grok", "GROK_API_KEY", "Search / Latest info"),
     ];
 
     println!("=== APEX Chorus — Connected Models ===\n");
     println!("[내장]");
-    for (name, key, role) in &models {
-        let status = if env::var(key).is_ok() { "✓" } else { "✗" };
+    for (name, _key, role) in &models {
+        let status = if has_key(name) { "✓" } else { "✗" };
         println!("{} {:8} — {}", status, name, role);
     }
     let custom = load_providers();

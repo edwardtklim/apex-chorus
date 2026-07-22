@@ -17,7 +17,7 @@ pub fn active_plan() -> (String, String) {
         let guid = s
             .split("GUID:")
             .nth(1)
-            .and_then(|t| t.trim().split_whitespace().next())
+            .and_then(|t| t.split_whitespace().next())
             .unwrap_or("")
             .to_string();
         let label = s
@@ -55,7 +55,12 @@ pub fn save_silent() -> bool {
 /// 저장된 체크포인트 줄 목록.
 pub fn entries() -> Vec<String> {
     std::fs::read_to_string(FILE)
-        .map(|s| s.lines().map(|l| l.to_string()).filter(|l| !l.is_empty()).collect())
+        .map(|s| {
+            s.lines()
+                .map(|l| l.to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
         .unwrap_or_default()
 }
 

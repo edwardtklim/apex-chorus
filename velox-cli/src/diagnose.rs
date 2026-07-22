@@ -28,7 +28,10 @@ struct Snapshot {
 fn suspicious(snap: &Snapshot) -> Option<String> {
     let t = snap.max_temp_c?;
     if !(20.0..=110.0).contains(&t) {
-        return Some(format!("온도 {:.1}°C가 정상 범위(20~110°C) 밖 — 센서 오류 의심", t));
+        return Some(format!(
+            "온도 {:.1}°C가 정상 범위(20~110°C) 밖 — 센서 오류 의심",
+            t
+        ));
     }
     if t >= TEMP_WARN_C && snap.cpu_usage < 20.0 {
         return Some(format!(
@@ -41,7 +44,7 @@ fn suspicious(snap: &Snapshot) -> Option<String> {
 
 impl Snapshot {
     fn is_hot(&self) -> bool {
-        self.max_temp_c.map_or(false, |t| t >= TEMP_WARN_C)
+        self.max_temp_c.is_some_and(|t| t >= TEMP_WARN_C)
     }
 }
 
@@ -192,16 +195,15 @@ async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
 }
 
 fn propose_rule_based(snap: &Snapshot) -> Action {
-    if snap.is_hot() {
-        if let Some((label, guid)) = velox_core::action::plan_by_key("balanced") {
-            if guid.to_lowercase() != snap.plan_guid.to_lowercase() {
-                return Action::SetPowerPlan {
-                    label,
-                    guid,
-                    rollback_guid: snap.plan_guid.clone(),
-                };
-            }
-        }
+    if snap.is_hot()
+        && let Some((label, guid)) = velox_core::action::plan_by_key("balanced")
+        && guid.to_lowercase() != snap.plan_guid.to_lowercase()
+    {
+        return Action::SetPowerPlan {
+            label,
+            guid,
+            rollback_guid: snap.plan_guid.clone(),
+        };
     }
     Action::None
 }
@@ -281,7 +283,10 @@ pub async fn run(fix: bool, simulate_hot: bool) {
         }
         Action::SetPowerPlan { label, .. } => {
             if !confirmed {
-                println!("[3] Confirmer AI가 반려함 → 실행 차단 🛑 (제안: 전원 모드 → {})", label);
+                println!(
+                    "[3] Confirmer AI가 반려함 → 실행 차단 🛑 (제안: 전원 모드 → {})",
+                    label
+                );
                 return;
             }
             println!(
@@ -336,7 +341,7 @@ pub async fn run(fix: bool, simulate_hot: bool) {
 pub fn quick_status() -> (String, bool) {
     let (_, plan_label) = velox_core::snapshot::active_power_plan();
     let temp = velox_core::snapshot::max_temp_c();
-    let hot = temp.map_or(false, |t| t >= TEMP_WARN_C);
+    let hot = temp.is_some_and(|t| t >= TEMP_WARN_C);
     let temp_s = temp
         .map(|c| format!("{:.1}°C", c))
         .unwrap_or_else(|| "N/A".to_string());
@@ -428,7 +433,11 @@ mod tests {
     fn validate_accepts_whitelisted_switch() {
         let s = snap(Some(90.0), 80.0, BALANCED);
         match validate(&proposal("set_power_plan", Some("high_performance")), &s) {
-            Action::SetPowerPlan { guid, rollback_guid, .. } => {
+            Action::SetPowerPlan {
+                guid,
+                rollback_guid,
+                ..
+            } => {
                 assert_eq!(guid, HIGH_PERF);
                 assert_eq!(rollback_guid.as_str(), BALANCED); // 롤백 대상 = 직전 상태
             }
@@ -440,15 +449,24 @@ mod tests {
     fn validate_rejects_non_whitelisted_action() {
         // AI가 화이트리스트 밖 동작을 지어내도 None — 명령 생성 차단.
         let s = snap(Some(90.0), 80.0, BALANCED);
-        assert!(matches!(validate(&proposal("delete_system_files", None), &s), Action::None));
-        assert!(matches!(validate(&proposal("set_power_plan", Some("turbo_mode")), &s), Action::None));
+        assert!(matches!(
+            validate(&proposal("delete_system_files", None), &s),
+            Action::None
+        ));
+        assert!(matches!(
+            validate(&proposal("set_power_plan", Some("turbo_mode")), &s),
+            Action::None
+        ));
     }
 
     #[test]
     fn validate_skips_when_already_in_target_plan() {
         // 이미 balanced인데 balanced 제안 → 변화 없음(None).
         let s = snap(Some(90.0), 80.0, BALANCED);
-        assert!(matches!(validate(&proposal("set_power_plan", Some("balanced")), &s), Action::None));
+        assert!(matches!(
+            validate(&proposal("set_power_plan", Some("balanced")), &s),
+            Action::None
+        ));
     }
 
     #[test]

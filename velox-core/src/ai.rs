@@ -31,24 +31,64 @@ pub fn env_var_for(provider: &str) -> Option<&'static str> {
     }
 }
 
+/// Resolve a provider key for the current process. Environment variables remain a
+/// migration/development fallback; newly saved keys live in the OS credential store.
+pub fn api_key_for(provider: &str) -> Option<String> {
+    env_var_for(provider)
+        .and_then(|name| env::var(name).ok())
+        .filter(|key| !key.trim().is_empty())
+        .or_else(|| crate::credentials::get(provider))
+}
+
+pub fn has_key(provider: &str) -> bool {
+    api_key_for(provider).is_some()
+}
+
 /// 키워드 기반 라우팅.
 pub fn route_model(prompt: &str) -> &'static str {
     let p = prompt.to_lowercase();
 
-    if p.contains("code") || p.contains("rust") || p.contains("bug") ||
-       p.contains("error") || p.contains("function") || p.contains("review") ||
-       p.contains("코드") || p.contains("버그") || p.contains("함수") {
+    if p.contains("code")
+        || p.contains("rust")
+        || p.contains("bug")
+        || p.contains("error")
+        || p.contains("function")
+        || p.contains("review")
+        || p.contains("코드")
+        || p.contains("버그")
+        || p.contains("함수")
+    {
         "claude"
-    } else if p.contains("market") || p.contains("business") || p.contains("strategy") ||
-              p.contains("idea") || p.contains("revenue") || p.contains("growth") ||
-              p.contains("시장") || p.contains("전략") || p.contains("아이디어") {
+    } else if p.contains("market")
+        || p.contains("business")
+        || p.contains("strategy")
+        || p.contains("idea")
+        || p.contains("revenue")
+        || p.contains("growth")
+        || p.contains("시장")
+        || p.contains("전략")
+        || p.contains("아이디어")
+    {
         "gpt"
-    } else if p.contains("latest") || p.contains("recent") || p.contains("news") ||
-              p.contains("today") || p.contains("2025") || p.contains("2026") ||
-              p.contains("최신") || p.contains("뉴스") || p.contains("오늘") {
+    } else if p.contains("latest")
+        || p.contains("recent")
+        || p.contains("news")
+        || p.contains("today")
+        || p.contains("2025")
+        || p.contains("2026")
+        || p.contains("최신")
+        || p.contains("뉴스")
+        || p.contains("오늘")
+    {
         "grok"
-    } else if p.contains("document") || p.contains("analyze") || p.contains("summarize") ||
-              p.contains("file") || p.contains("문서") || p.contains("분석") || p.contains("요약") {
+    } else if p.contains("document")
+        || p.contains("analyze")
+        || p.contains("summarize")
+        || p.contains("file")
+        || p.contains("문서")
+        || p.contains("분석")
+        || p.contains("요약")
+    {
         "gemini"
     } else {
         "claude"
@@ -69,13 +109,13 @@ pub async fn route_semantic(prompt: &str) -> String {
         prompt
     );
     for router in ["gpt", "claude"] {
-        if env_var_for(router).map(|v| env::var(v).is_ok()).unwrap_or(false) {
-            if let Some(resp) = query_text_with(router, &router_prompt).await {
-                let pick = resp.to_lowercase();
-                for m in ["claude", "gpt", "gemini", "grok"] {
-                    if pick.contains(m) {
-                        return m.to_string();
-                    }
+        if has_key(router)
+            && let Some(resp) = query_text_with(router, &router_prompt).await
+        {
+            let pick = resp.to_lowercase();
+            for m in ["claude", "gpt", "gemini", "grok"] {
+                if pick.contains(m) {
+                    return m.to_string();
                 }
             }
         }
@@ -88,7 +128,7 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
     let client = http_client();
     match model {
         "gpt" => {
-            let key = env::var("OPENAI_API_KEY").ok()?;
+            let key = api_key_for("gpt")?;
             let r = client
                 .post("https://api.openai.com/v1/chat/completions")
                 .header("Authorization", format!("Bearer {}", key))
@@ -97,12 +137,16 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
                     "model": "gpt-4o", "max_tokens": 1024,
                     "messages": [{ "role": "user", "content": prompt }]
                 }))
-                .send().await.ok()?;
+                .send()
+                .await
+                .ok()?;
             let body: serde_json::Value = r.json().await.ok()?;
-            body["choices"][0]["message"]["content"].as_str().map(|s| s.to_string())
+            body["choices"][0]["message"]["content"]
+                .as_str()
+                .map(|s| s.to_string())
         }
         "gemini" => {
-            let key = env::var("GEMINI_API_KEY").ok()?;
+            let key = api_key_for("gemini")?;
             let url = format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
                 key
@@ -111,7 +155,9 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
                 .post(&url)
                 .header("content-type", "application/json")
                 .json(&json!({ "contents": [{ "parts": [{ "text": prompt }] }] }))
-                .send().await.ok()?;
+                .send()
+                .await
+                .ok()?;
             let body: serde_json::Value = r.json().await.ok()?;
             // Gemini 2.5 Pro는 thinking 모델 — 모든 part의 text를 모아 답을 추출.
             let parts = body["candidates"][0]["content"]["parts"].as_array()?;
@@ -123,7 +169,7 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
             (!text.is_empty()).then_some(text)
         }
         "grok" => {
-            let key = env::var("GROK_API_KEY").ok()?;
+            let key = api_key_for("grok")?;
             let r = client
                 .post("https://api.x.ai/v1/chat/completions")
                 .header("Authorization", format!("Bearer {}", key))
@@ -132,12 +178,16 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
                     "model": "grok-3", "max_tokens": 1024,
                     "messages": [{ "role": "user", "content": prompt }]
                 }))
-                .send().await.ok()?;
+                .send()
+                .await
+                .ok()?;
             let body: serde_json::Value = r.json().await.ok()?;
-            body["choices"][0]["message"]["content"].as_str().map(|s| s.to_string())
+            body["choices"][0]["message"]["content"]
+                .as_str()
+                .map(|s| s.to_string())
         }
         "claude" | "anthropic" => {
-            let key = env::var("ANTHROPIC_API_KEY").ok()?;
+            let key = api_key_for("claude")?;
             let r = client
                 .post("https://api.anthropic.com/v1/messages")
                 .header("x-api-key", &key)
@@ -147,14 +197,21 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
                     "model": "claude-sonnet-4-5", "max_tokens": 1024,
                     "messages": [{ "role": "user", "content": prompt }]
                 }))
-                .send().await.ok()?;
+                .send()
+                .await
+                .ok()?;
             let body: serde_json::Value = r.json().await.ok()?;
             body["content"][0]["text"].as_str().map(|s| s.to_string())
         }
         other => {
             // 커스텀 provider (OpenAI 호환): velox_providers.json 에서 조회
             let p = load_providers().into_iter().find(|x| x.name == other)?;
-            query_openai_compatible(&client, &p.base_url, &p.model, &p.api_key, prompt).await
+            let key = if p.api_key.is_empty() {
+                crate::credentials::get(other).unwrap_or_default()
+            } else {
+                p.api_key
+            };
+            query_openai_compatible(&client, &p.base_url, &p.model, &key, prompt).await
         }
     }
 }
@@ -178,7 +235,18 @@ pub fn load_providers() -> Vec<ProviderConfig> {
 }
 
 pub fn save_providers(ps: &[ProviderConfig]) -> bool {
-    serde_json::to_string_pretty(ps)
+    let scrubbed: Vec<ProviderConfig> = ps
+        .iter()
+        .cloned()
+        .map(|mut provider| {
+            if !provider.api_key.is_empty() && provider.api_key.to_lowercase() != "none" {
+                let _ = crate::credentials::set(&provider.name, &provider.api_key);
+                provider.api_key.clear();
+            }
+            provider
+        })
+        .collect();
+    serde_json::to_string_pretty(&scrubbed)
         .ok()
         .and_then(|s| std::fs::write(PROVIDERS_FILE, s).ok())
         .is_some()

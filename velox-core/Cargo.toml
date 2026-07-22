@@ -1,7 +1,8 @@
 [package]
 name = "velox-core"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 sysinfo = "0.30"
@@ -10,6 +11,7 @@ encoding_rs = "0.8"
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+keyring = { version = "3.6", features = ["windows-native"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

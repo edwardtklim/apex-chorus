@@ -66,7 +66,7 @@ fn wmi_bits() -> String {
         Err(_) => return "- (WMI 초기화 실패)\n".to_string(),
     };
 
-    if let Ok(con) = WMIConnection::new(com.clone()) {
+    if let Ok(con) = WMIConnection::new(com) {
         #[derive(Deserialize)]
         #[serde(rename = "Win32_VideoController")]
         struct G {

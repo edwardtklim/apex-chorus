@@ -42,7 +42,7 @@ pub struct SystemInfo {
 }
 
 /// 디스플레이(GPU) 드라이버 정보.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct GpuInfo {
     pub name: String,
     pub driver_version: String,
@@ -50,14 +50,14 @@ pub struct GpuInfo {
 }
 
 /// 장치 드라이버 (이름, 버전).
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct DriverInfo {
     pub device: String,
     pub version: String,
 }
 
 /// 시스템 상태 스냅샷. 순수 데이터 — 포맷/표시는 호출자 몫.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Snapshot {
     // --- 순간값 (비교엔 무의미, 참고용) ---
     pub plan_guid: String,
@@ -95,7 +95,7 @@ pub fn active_power_plan() -> (String, String) {
         let guid = s
             .split("GUID:")
             .nth(1)
-            .and_then(|t| t.trim().split_whitespace().next())
+            .and_then(|t| t.split_whitespace().next())
             .unwrap_or("")
             .to_string();
         let label = s
@@ -274,12 +274,28 @@ pub fn compare(old: &Snapshot, new: &Snapshot) -> SnapshotDiff {
     push_if_changed(&mut d, "커널", &old.system.kernel, &new.system.kernel);
     push_if_changed(&mut d, "전원 모드", &old.plan_label, &new.plan_label);
 
-    let og: Vec<_> = old.gpus.iter().map(|g| (g.name.clone(), g.driver_version.clone())).collect();
-    let ng: Vec<_> = new.gpus.iter().map(|g| (g.name.clone(), g.driver_version.clone())).collect();
+    let og: Vec<_> = old
+        .gpus
+        .iter()
+        .map(|g| (g.name.clone(), g.driver_version.clone()))
+        .collect();
+    let ng: Vec<_> = new
+        .gpus
+        .iter()
+        .map(|g| (g.name.clone(), g.driver_version.clone()))
+        .collect();
     diff_versioned("GPU", &og, &ng, &mut d);
 
-    let od: Vec<_> = old.drivers.iter().map(|x| (x.device.clone(), x.version.clone())).collect();
-    let nd: Vec<_> = new.drivers.iter().map(|x| (x.device.clone(), x.version.clone())).collect();
+    let od: Vec<_> = old
+        .drivers
+        .iter()
+        .map(|x| (x.device.clone(), x.version.clone()))
+        .collect();
+    let nd: Vec<_> = new
+        .drivers
+        .iter()
+        .map(|x| (x.device.clone(), x.version.clone()))
+        .collect();
     diff_versioned("드라이버", &od, &nd, &mut d);
 
     d
@@ -317,8 +333,18 @@ mod tests {
     #[test]
     fn serializes_to_json_with_expected_keys() {
         let json = serde_json::to_string(&sample()).unwrap();
-        for key in ["plan_guid", "cpu_usage", "max_temp_c", "system", "gpus", "drivers"] {
-            assert!(json.contains(&format!("\"{key}\"")), "missing {key} in {json}");
+        for key in [
+            "plan_guid",
+            "cpu_usage",
+            "max_temp_c",
+            "system",
+            "gpus",
+            "drivers",
+        ] {
+            assert!(
+                json.contains(&format!("\"{key}\"")),
+                "missing {key} in {json}"
+            );
         }
     }
 

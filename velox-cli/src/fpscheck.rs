@@ -3,10 +3,10 @@
 // ETW(DXGI present)로 N초간 프레임을 측정해 게임 프로세스의 평균/최저/최고/1% low fps를
 // 계산하고, AI가 "체감 부드러움·스터터 여부·그래픽 설정"을 조언만 한다. (시스템 변경 없음)
 
+use ferrisetw::EventRecord;
 use ferrisetw::provider::Provider;
 use ferrisetw::schema_locator::SchemaLocator;
 use ferrisetw::trace::UserTrace;
-use ferrisetw::EventRecord;
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -17,7 +17,10 @@ const DXGI_PROVIDER_GUID: &str = "CA11C036-0102-4A2D-A6AD-F03CFED5D3C9";
 const DXGI_PRESENT_START: u16 = 42;
 
 pub async fn run(seconds: u64) {
-    println!("=== APEX Velox — fpscheck ({}초 · 읽기 전용 · 조언만) ===", seconds);
+    println!(
+        "=== APEX Velox — fpscheck ({}초 · 읽기 전용 · 조언만) ===",
+        seconds
+    );
     println!("(관리자 권한 필요. 게임/3D 앱을 켜고 실행하세요.)\n");
 
     // (pid, 측정 시작 이후 경과 초) 기록 → 프레임 간격으로 순간 fps 산출
@@ -57,7 +60,7 @@ pub async fn run(seconds: u64) {
     println!();
     trace.stop().ok();
 
-    let evs = events.lock().unwrap();
+    let evs = events.lock().unwrap().clone();
     if evs.is_empty() {
         println!("present 이벤트 없음 — 게임이 실행 중인지 / 관리자 권한인지 확인.");
         return;
@@ -79,7 +82,7 @@ pub async fn run(seconds: u64) {
 
     // 게임 = dwm.exe 아닌 최다 present 프로세스
     let mut ranked: Vec<(u32, u64)> = counts.iter().map(|(&k, &v)| (k, v)).collect();
-    ranked.sort_by(|a, b| b.1.cmp(&a.1));
+    ranked.sort_by_key(|row| std::cmp::Reverse(row.1));
     let game = ranked
         .iter()
         .find(|(pid, _)| {
@@ -98,7 +101,11 @@ pub async fn run(seconds: u64) {
     let gname = name_of(gpid);
 
     // 게임 pid의 타임스탬프 → 프레임 간격 → 순간 fps 분포
-    let mut ts: Vec<f64> = evs.iter().filter(|(p, _)| *p == gpid).map(|(_, t)| *t).collect();
+    let mut ts: Vec<f64> = evs
+        .iter()
+        .filter(|(p, _)| *p == gpid)
+        .map(|(_, t)| *t)
+        .collect();
     ts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let avg_fps = gcount as f64 / seconds as f64;
@@ -114,7 +121,9 @@ pub async fn run(seconds: u64) {
     let min_fps = inst.first().cloned().unwrap_or(0.0);
     let max_fps = inst.last().cloned().unwrap_or(0.0);
     // 1% low = 가장 낮은 1% 순간 fps의 평균 (스터터 지표)
-    let n1 = (((inst.len() as f64) * 0.01).ceil() as usize).max(1).min(inst.len());
+    let n1 = (((inst.len() as f64) * 0.01).ceil() as usize)
+        .max(1)
+        .min(inst.len());
     let low1 = if inst.is_empty() {
         0.0
     } else {

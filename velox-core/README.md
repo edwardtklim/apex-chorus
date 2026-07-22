@@ -10,6 +10,10 @@ The shared **engine** behind APEX Velox. Pure logic — it returns data; the cal
 | `util` | console-output decoding (system codepage → UTF-8 fallback) |
 | `watch` | live CPU / RAM / Disk / Network metrics (`Watcher`, `Metrics`) |
 | `ai` | multi-provider AI calls + routing (`query_text_with`, `route_semantic`, custom providers) |
+| `health` | deterministic, AI-independent PC health report |
+| `benchmark` | structured CPU benchmark report shared by CLI/API |
+| `privacy` | explicit minimum/system/driver AI context scopes |
+| `credentials` | native OS credential-vault storage for provider keys |
 | `checkpoint` | save / restore a known-good system state |
 | `action` | whitelisted, reversible system actions (power plan) |
 

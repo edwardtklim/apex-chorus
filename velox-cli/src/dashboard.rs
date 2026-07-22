@@ -67,7 +67,12 @@ fn gpu() -> Option<GpuShot> {
         return None;
     }
     let s = String::from_utf8_lossy(&o.stdout);
-    let p: Vec<String> = s.lines().next()?.split(',').map(|x| x.trim().to_string()).collect();
+    let p: Vec<String> = s
+        .lines()
+        .next()?
+        .split(',')
+        .map(|x| x.trim().to_string())
+        .collect();
     if p.len() != 5 {
         return None;
     }
@@ -108,7 +113,12 @@ pub async fn run() {
         println!();
         println!("  Net   ↓{:.1}  ↑{:.1} MB/s", m.rx_mbps, m.tx_mbps);
         println!("  Power {}", pw);
-        println!("  Drv   {}", drivers.trim_start_matches("- ").trim_start_matches("드라이버: "));
+        println!(
+            "  Drv   {}",
+            drivers
+                .trim_start_matches("- ")
+                .trim_start_matches("드라이버: ")
+        );
         println!("╰─────────────────── 1초 갱신 · Ctrl+C 종료 ────────╯");
 
         std::io::stdout().flush().ok();

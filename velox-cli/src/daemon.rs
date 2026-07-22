@@ -79,7 +79,7 @@ pub async fn run(interval_secs: u64, auto: bool) {
         }
 
         // 2) 지속성 + 쿨다운 둘 다 통과해야 무거운 AI 반응 가동
-        let cooldown_ok = last_fire.map_or(true, |t| t.elapsed() >= cooldown);
+        let cooldown_ok = last_fire.is_none_or(|t| t.elapsed() >= cooldown);
         if hot && hot_streak >= CONSECUTIVE_HOT_REQUIRED && cooldown_ok {
             println!("  → 지속 확인됨(글리치 아님) → 3단계 AI 파이프라인 가동");
             log_event("anomaly persisted -> react");
