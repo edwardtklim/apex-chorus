@@ -1,6 +1,6 @@
 use velox_core::ai::{
-    PROVIDERS_FILE, ProviderConfig, env_var_for, has_key, load_providers, query_text_with,
-    save_providers,
+    MODELS_FILE, PROVIDERS_FILE, ProviderConfig, env_var_for, has_key, load_providers, model_name,
+    query_text_with, save_providers,
 };
 
 fn get_system_context() -> String {
@@ -123,6 +123,25 @@ pub fn add_provider(name: &str, base_url: &str, model: &str, key: &str) {
         println!("  (저장: {})", PROVIDERS_FILE);
     } else {
         println!("✗ 저장 실패");
+    }
+}
+
+/// 내장 provider의 모델 ID 설정. `velox chorus model set <provider> <model-id>`
+pub fn set_model(provider: &str, model_id: &str) {
+    match velox_core::ai::set_model(provider, model_id) {
+        Ok(id) => {
+            println!("✓ {} 모델 설정됨 → {}", provider, id);
+            println!("  (저장: {})", MODELS_FILE);
+        }
+        Err(e) => println!("✗ {}", e),
+    }
+}
+
+/// 내장 provider의 모델을 기본값으로 초기화. `velox chorus model reset <provider>`
+pub fn reset_model(provider: &str) {
+    match velox_core::ai::reset_model(provider) {
+        Ok(id) => println!("✓ {} 모델 기본값 복원 → {}", provider, id),
+        Err(e) => println!("✗ {}", e),
     }
 }
 
@@ -449,25 +468,62 @@ pub async fn consensus(question: &str) {
 }
 
 pub fn show_models() {
-    let models = [
-        ("claude", "ANTHROPIC_API_KEY", "Code / Architecture"),
-        ("gpt", "OPENAI_API_KEY", "Strategy / Business"),
-        ("gemini", "GEMINI_API_KEY", "Docs / Analysis"),
-        ("grok", "GROK_API_KEY", "Search / Latest info"),
+    let roles = [
+        ("claude", "Code / Architecture"),
+        ("gpt", "Strategy / Business"),
+        ("gemini", "Docs / Analysis"),
+        ("grok", "Search / Latest info"),
     ];
 
     println!("=== APEX Chorus — Connected Models ===\n");
-    println!("[내장]");
-    for (name, _key, role) in &models {
-        let status = if has_key(name) { "✓" } else { "✗" };
-        println!("{} {:8} — {}", status, name, role);
+    println!("[내장]  (모델 변경: chorus model set <provider> <id>)");
+    for (name, role) in &roles {
+        let key = if has_key(name) {
+            "✓ key"
+        } else {
+            "✗ no-key"
+        };
+        println!(
+            "{:8} model={:<24} [{}]  {}",
+            name,
+            model_name(name),
+            key,
+            role
+        );
     }
     let custom = load_providers();
     if !custom.is_empty() {
         println!("\n[커스텀 — chorus add 로 추가됨]");
         for p in &custom {
-            println!("✓ {:8} — {} ({})", p.name, p.model, p.base_url);
+            let key = if has_key(&p.name) {
+                "✓ key"
+            } else {
+                "· inline/none"
+            };
+            println!(
+                "{:8} model={:<24} [{}]  {}",
+                p.name, p.model, key, p.base_url
+            );
         }
     }
+
+    // Agent Policy — 아직 provider별로 적용되진 않음(Step C). 현재 강제되는 기본 정책을 보여준다.
+    let pol = velox_core::policy::AgentPolicy::default();
+    println!("\n[Agent Policy — 기본값 · Step C에서 provider별 적용 예정]");
+    println!(
+        "scope={:?} · tools={} · cloud={} · confirm={}",
+        pol.max_context_scope,
+        if pol.allowed_tools.is_empty() {
+            "none".to_string()
+        } else {
+            pol.allowed_tools.join(",")
+        },
+        pol.allow_cloud,
+        if pol.require_confirmation {
+            "required"
+        } else {
+            "off"
+        }
+    );
     println!();
 }

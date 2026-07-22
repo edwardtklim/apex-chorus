@@ -184,8 +184,13 @@ enum ChorusCommands {
         #[arg(long = "no-context")]
         no_context: bool,
     },
-    /// 연결된 AI 목록 + 키 상태
+    /// 연결된 AI 목록 + 모델/키/정책 상태
     Models,
+    /// 모델 설정 — 내장 provider가 쓸 모델 ID 지정/초기화: chorus model set <provider> <id>
+    Model {
+        #[command(subcommand)]
+        action: ModelCommands,
+    },
     /// API 키 직접 입력·저장 (.env): chorus set <provider> <key>
     Set { provider: String, key: String },
     /// 커스텀 AI provider 추가 (OpenAI 호환): chorus add <name> <base_url> <model> [key]
@@ -205,6 +210,14 @@ enum ChorusCommands {
     },
     /// AI 합의 — 같은 질문을 여러 모델에 → 공통점/차이 정리: chorus consensus "질문"
     Consensus { question: String },
+}
+
+#[derive(Subcommand)]
+enum ModelCommands {
+    /// provider의 모델 ID 설정: chorus model set <provider> <model-id>
+    Set { provider: String, model_id: String },
+    /// provider의 모델을 기본값으로 초기화: chorus model reset <provider>
+    Reset { provider: String },
 }
 
 #[tokio::main]
@@ -283,6 +296,12 @@ async fn main() {
             ChorusCommands::Models => {
                 chorus::show_models();
             }
+            ChorusCommands::Model { action } => match action {
+                ModelCommands::Set { provider, model_id } => {
+                    chorus::set_model(&provider, &model_id)
+                }
+                ModelCommands::Reset { provider } => chorus::reset_model(&provider),
+            },
             ChorusCommands::Set { provider, key } => chorus::set_key(&provider, &key),
             ChorusCommands::Add {
                 name,

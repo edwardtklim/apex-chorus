@@ -14,6 +14,7 @@ pub mod benchmark;
 pub mod checkpoint;
 pub mod credentials;
 pub mod health;
+pub mod policy;
 pub mod privacy;
 pub mod snapshot;
 pub mod util;

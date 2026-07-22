@@ -9,6 +9,7 @@ use serde_json::json;
 use std::env;
 
 pub const PROVIDERS_FILE: &str = "velox_providers.json";
+pub const MODELS_FILE: &str = "velox_models.json";
 
 /// 타임아웃이 걸린 HTTP 클라이언트 — provider가 느리거나 무응답이어도 무한 대기하지 않는다.
 /// (diagnose는 AI를 3번 연속 호출하므로 한 곳이 매달리면 전체가 멈춘다)
@@ -42,6 +43,144 @@ pub fn api_key_for(provider: &str) -> Option<String> {
 
 pub fn has_key(provider: &str) -> bool {
     api_key_for(provider).is_some()
+}
+
+/// 내장 provider(claude/gpt/gemini/grok)가 쓸 **모델 이름**.
+/// 코드에 박지 않고 설정으로 분리한다 (Council/Agent Policy가 역할별로 모델을 고르기 위한 토대).
+/// 해석 우선순위: 환경변수(`VELOX_MODEL_*`) > 설정파일(`velox_models.json`) > 기본값.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct ModelConfig {
+    pub claude: String,
+    pub gpt: String,
+    pub gemini: String,
+    pub grok: String,
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            claude: "claude-sonnet-4-5".into(),
+            gpt: "gpt-4o".into(),
+            gemini: "gemini-2.5-pro".into(),
+            grok: "grok-3".into(),
+        }
+    }
+}
+
+/// 모델 ID의 최대 허용 길이(문자 수).
+pub const MAX_MODEL_ID_LEN: usize = 128;
+
+/// **파일만** 읽은 모델 구성(환경변수 오버라이드 없음). 파일이 없으면 기본값.
+/// 저장 시 기준값 — env 오버라이드를 파일에 굳혀 넣지 않기 위해 분리한다.
+fn load_models_file() -> ModelConfig {
+    std::fs::read_to_string(MODELS_FILE)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// 설정파일 + 환경변수를 반영한 **현재 유효** 모델 구성. 파일이 없으면 기본값.
+pub fn load_models() -> ModelConfig {
+    let mut m = load_models_file();
+    let ov = |var: &str, cur: &mut String| {
+        if let Ok(v) = env::var(var) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                *cur = v;
+            }
+        }
+    };
+    ov("VELOX_MODEL_CLAUDE", &mut m.claude);
+    ov("VELOX_MODEL_GPT", &mut m.gpt);
+    ov("VELOX_MODEL_GEMINI", &mut m.gemini);
+    ov("VELOX_MODEL_GROK", &mut m.grok);
+    m
+}
+
+/// 원자적 파일 쓰기 — 임시 파일에 쓴 뒤 rename. 쓰다가 죽어도 원본이 깨지지 않는다.
+fn atomic_write(path: &str, contents: &str) -> std::io::Result<()> {
+    let tmp = format!("{path}.tmp");
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// 모델 구성을 `velox_models.json`에 원자적으로 저장.
+pub fn save_models(m: &ModelConfig) -> bool {
+    serde_json::to_string_pretty(m)
+        .ok()
+        .and_then(|s| atomic_write(MODELS_FILE, &s).ok())
+        .is_some()
+}
+
+/// 사용자가 준 모델 ID 검증 — 공백 제거 후 빈 값 / 제어문자 / 과도한 길이를 거부.
+/// 성공하면 정규화(trim)된 ID를 돌려준다.
+pub fn validate_model_id(id: &str) -> Result<String, String> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        return Err("모델 ID가 비어 있습니다".into());
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err("모델 ID에 제어문자가 포함되어 있습니다".into());
+    }
+    if trimmed.chars().count() > MAX_MODEL_ID_LEN {
+        return Err(format!("모델 ID가 너무 깁니다 (최대 {MAX_MODEL_ID_LEN}자)"));
+    }
+    Ok(trimmed.to_string())
+}
+
+/// 내장 provider의 슬롯을 가리키는 가변 참조. 알 수 없는 provider면 None.
+fn model_slot<'a>(m: &'a mut ModelConfig, provider: &str) -> Option<&'a mut String> {
+    match provider.to_lowercase().as_str() {
+        "claude" | "anthropic" => Some(&mut m.claude),
+        "gpt" | "openai" => Some(&mut m.gpt),
+        "gemini" | "google" => Some(&mut m.gemini),
+        "grok" | "xai" => Some(&mut m.grok),
+        _ => None,
+    }
+}
+
+const UNKNOWN_PROVIDER: &str = "알 수 없는 provider (claude / gpt / gemini / grok)";
+
+/// provider의 모델을 검증 후 설정하고 저장. 성공하면 저장된 모델 ID를 반환.
+pub fn set_model(provider: &str, model_id: &str) -> Result<String, String> {
+    let id = validate_model_id(model_id)?;
+    let mut m = load_models_file();
+    match model_slot(&mut m, provider) {
+        Some(slot) => *slot = id.clone(),
+        None => return Err(UNKNOWN_PROVIDER.into()),
+    }
+    if save_models(&m) {
+        Ok(id)
+    } else {
+        Err("설정 저장 실패".into())
+    }
+}
+
+/// provider의 모델을 기본값으로 되돌리고 저장. 성공하면 복원된 기본 모델 ID를 반환.
+pub fn reset_model(provider: &str) -> Result<String, String> {
+    let mut defaults = ModelConfig::default();
+    let default_id = match model_slot(&mut defaults, provider) {
+        Some(slot) => slot.clone(),
+        None => return Err(UNKNOWN_PROVIDER.into()),
+    };
+    let mut m = load_models_file();
+    if let Some(slot) = model_slot(&mut m, provider) {
+        *slot = default_id.clone();
+    }
+    if save_models(&m) {
+        Ok(default_id)
+    } else {
+        Err("설정 저장 실패".into())
+    }
+}
+
+/// provider 별칭 → 설정된(유효) 모델 이름. 알 수 없는 provider면 빈 문자열.
+pub fn model_name(provider: &str) -> String {
+    let mut m = load_models();
+    model_slot(&mut m, provider)
+        .map(|s| s.clone())
+        .unwrap_or_default()
 }
 
 /// 키워드 기반 라우팅.
@@ -126,6 +265,7 @@ pub async fn route_semantic(prompt: &str) -> String {
 /// 특정 provider 호출, 텍스트 반환. diagnose 3단계 파이프라인·bench·consensus의 엔진.
 pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
     let client = http_client();
+    let models = load_models();
     match model {
         "gpt" => {
             let key = api_key_for("gpt")?;
@@ -134,7 +274,7 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
                 .header("Authorization", format!("Bearer {}", key))
                 .header("content-type", "application/json")
                 .json(&json!({
-                    "model": "gpt-4o", "max_tokens": 1024,
+                    "model": &models.gpt, "max_tokens": 1024,
                     "messages": [{ "role": "user", "content": prompt }]
                 }))
                 .send()
@@ -148,8 +288,8 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
         "gemini" => {
             let key = api_key_for("gemini")?;
             let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
-                key
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                models.gemini, key
             );
             let r = client
                 .post(&url)
@@ -175,7 +315,7 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
                 .header("Authorization", format!("Bearer {}", key))
                 .header("content-type", "application/json")
                 .json(&json!({
-                    "model": "grok-3", "max_tokens": 1024,
+                    "model": &models.grok, "max_tokens": 1024,
                     "messages": [{ "role": "user", "content": prompt }]
                 }))
                 .send()
@@ -194,7 +334,7 @@ pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
                 .header("anthropic-version", "2023-06-01")
                 .header("content-type", "application/json")
                 .json(&json!({
-                    "model": "claude-sonnet-4-5", "max_tokens": 1024,
+                    "model": &models.claude, "max_tokens": 1024,
                     "messages": [{ "role": "user", "content": prompt }]
                 }))
                 .send()
@@ -304,6 +444,59 @@ mod tests {
     #[test]
     fn routing_defaults_to_claude() {
         assert_eq!(route_model("hello there"), "claude");
+    }
+
+    #[test]
+    fn model_config_defaults_match_builtins() {
+        // 기본값은 코드에서 뽑아낸 원래 하드코딩 모델과 같아야 한다(동작 불변).
+        let m = ModelConfig::default();
+        assert_eq!(m.claude, "claude-sonnet-4-5");
+        assert_eq!(m.gpt, "gpt-4o");
+        assert_eq!(m.gemini, "gemini-2.5-pro");
+        assert_eq!(m.grok, "grok-3");
+    }
+
+    #[test]
+    fn model_config_partial_json_fills_defaults() {
+        // 일부만 지정한 설정도 나머지 필드는 기본값으로 채워진다.
+        let m: ModelConfig = serde_json::from_str(r#"{"gpt":"gpt-4o-mini"}"#).unwrap();
+        assert_eq!(m.gpt, "gpt-4o-mini");
+        assert_eq!(m.claude, "claude-sonnet-4-5");
+        assert_eq!(m.grok, "grok-3");
+    }
+
+    #[test]
+    fn model_config_round_trips_through_json() {
+        let m = ModelConfig {
+            claude: "claude-opus-4-8".into(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let back: ModelConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn validate_model_id_accepts_and_trims_normal_ids() {
+        assert_eq!(validate_model_id("gpt-4o").unwrap(), "gpt-4o");
+        assert_eq!(
+            validate_model_id("  claude-sonnet-4-5  ").unwrap(),
+            "claude-sonnet-4-5"
+        );
+        assert_eq!(
+            validate_model_id("anthropic/claude-3.5-sonnet").unwrap(),
+            "anthropic/claude-3.5-sonnet"
+        );
+    }
+
+    #[test]
+    fn validate_model_id_rejects_bad_input() {
+        assert!(validate_model_id("").is_err()); // 빈 값
+        assert!(validate_model_id("   ").is_err()); // 공백뿐
+        assert!(validate_model_id("gpt\n4o").is_err()); // 줄바꿈(제어문자)
+        assert!(validate_model_id("bad\tid").is_err()); // 탭(제어문자)
+        assert!(validate_model_id(&"x".repeat(MAX_MODEL_ID_LEN + 1)).is_err()); // 초과
+        assert!(validate_model_id(&"x".repeat(MAX_MODEL_ID_LEN)).is_ok()); // 경계 OK
     }
 }
 
