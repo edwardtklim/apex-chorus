@@ -135,10 +135,12 @@ fn extract_json(s: &str) -> Option<&str> {
 // ---------------- [2] 3단계 AI 파이프라인 ----------------
 
 async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
-    // 1) Customer (Claude) — 의도/상황 이해
-    let intent = velox_core::ai::query_text_with(
+    // 1) Customer (Claude) — 의도/상황 이해 (정책 게이트 경유)
+    let intent = crate::chorus::gated_text(
         "claude",
-        &format!(
+        velox_core::policy::AgentPurpose::Diagnose,
+        velox_core::privacy::ContextScope::System,
+        format!(
             "다음 시스템 상태에서 사용자가 가장 걱정할 점이나 원하는 바를 한국어 한 줄로 요약:\n{}",
             snap.summary
         ),
@@ -159,7 +161,13 @@ async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
         intent.trim(),
         snap.summary
     );
-    let eng_raw = velox_core::ai::query_text_with("gpt", &eng_prompt).await?;
+    let eng_raw = crate::chorus::gated_text(
+        "gpt",
+        velox_core::policy::AgentPurpose::Propose,
+        velox_core::privacy::ContextScope::System,
+        eng_prompt,
+    )
+    .await?;
     let proposal: AiProposal = serde_json::from_str(extract_json(&eng_raw)?).ok()?;
     let action = validate(&proposal, snap);
 
@@ -172,9 +180,14 @@ async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
                  안전하고 합리적이면 'APPROVE', 아니면 'REJECT'로 시작해 한국어 한 줄 이유.",
                 label, snap.summary
             );
-            let r = velox_core::ai::query_text_with("gemini", &conf_prompt)
-                .await
-                .unwrap_or_else(|| "REJECT (검수 AI 응답 없음)".to_string());
+            let r = crate::chorus::gated_text(
+                "gemini",
+                velox_core::policy::AgentPurpose::Review,
+                velox_core::privacy::ContextScope::System,
+                conf_prompt,
+            )
+            .await
+            .unwrap_or_else(|| "REJECT (검수 AI 응답 없음)".to_string());
             (r.to_uppercase().contains("APPROVE"), r)
         }
     };

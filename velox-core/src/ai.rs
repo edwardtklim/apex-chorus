@@ -262,7 +262,12 @@ pub async fn route_semantic(prompt: &str) -> String {
     route_model(prompt).to_string()
 }
 
-/// 특정 provider 호출, 텍스트 반환. diagnose 3단계 파이프라인·bench·consensus의 엔진.
+/// 특정 provider 호출, 텍스트 반환.
+///
+/// **Deprecated (v0.15):** 새 제품 경로에서 직접 호출하지 말 것.
+/// 정책 게이트를 거치는 [`crate::policy::execute_agent`]를 사용하라 — 그래야 provider 위치·
+/// 클라우드 동의·데이터 범위·툴 권한이 강제된다. 이 함수는 게이트웨이의 내부 실행 단계와
+/// 아직 이전되지 않은 보조 경로(chorus bench/consensus/test)에서만 남겨둔다.
 pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
     let client = http_client();
     let models = load_models();

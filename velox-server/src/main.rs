@@ -267,25 +267,48 @@ async fn diagnose_stream(
             )
         ));
 
-        let intent = velox_core::ai::query_text_with(
+        // 정책 게이트 경유 — 미승인/범위초과면 이유를 말풍선으로 알리고 중단.
+        macro_rules! gated {
+            ($provider:expr, $purpose:expr, $prompt:expr) => {
+                match velox_core::policy::execute_agent(velox_core::policy::AgentRequest {
+                    provider: $provider.to_string(),
+                    purpose: $purpose,
+                    prompt: $prompt,
+                    scope: options.scope,
+                    requested_tools: std::collections::BTreeSet::new(),
+                })
+                .await
+                {
+                    Ok(r) => r.text,
+                    Err(e) => {
+                        push!(ev(
+                            "시스템",
+                            &format!(
+                                "{} 호출 불가: {e}\n(동의: `velox chorus consent {}`)",
+                                $provider, $provider
+                            )
+                        ));
+                        return;
+                    }
+                }
+            };
+        }
+
+        let intent = gated!(
             "claude",
-            &format!(
-                "다음 시스템 상태에서 사용자가 가장 걱정할 점을 한국어 한 줄로 요약:\n{state}"
-            ),
-        )
-        .await
-        .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
+            velox_core::policy::AgentPurpose::Diagnose,
+            format!("다음 시스템 상태에서 사용자가 가장 걱정할 점을 한국어 한 줄로 요약:\n{state}")
+        );
         push!(ev("Customer · Claude", &intent));
 
-        let eng = velox_core::ai::query_text_with(
+        let eng = gated!(
             "gpt",
-            &format!(
+            velox_core::policy::AgentPurpose::Propose,
+            format!(
                 "너는 시스템 엔지니어 AI다. 안전하고 되돌릴 수 있는 조치를 한국어 한 줄로 제안하라(애매하면 '조치 없음').\n사용자 의도: {}\n상태:\n{state}",
                 intent.trim()
-            ),
-        )
-        .await
-        .unwrap_or_else(|| "(응답 없음 — API 키 확인)".into());
+            )
+        );
         push!(ev("Engineer · GPT", &eng));
 
         push!(ev(

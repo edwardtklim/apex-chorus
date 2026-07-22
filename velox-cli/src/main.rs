@@ -191,6 +191,15 @@ enum ChorusCommands {
         #[command(subcommand)]
         action: ModelCommands,
     },
+    /// 클라우드 호출 동의 — provider별 명시적 consent: chorus consent <provider> [--scope minimal|system|drivers]
+    Consent {
+        provider: String,
+        /// 허용할 최대 데이터 범위 (기본 minimal)
+        #[arg(long, default_value = "minimal")]
+        scope: String,
+    },
+    /// 동의 철회 — provider를 deny-by-default로: chorus revoke <provider>
+    Revoke { provider: String },
     /// API 키 직접 입력·저장 (.env): chorus set <provider> <key>
     Set { provider: String, key: String },
     /// 커스텀 AI provider 추가 (OpenAI 호환): chorus add <name> <base_url> <model> [key]
@@ -302,6 +311,8 @@ async fn main() {
                 }
                 ModelCommands::Reset { provider } => chorus::reset_model(&provider),
             },
+            ChorusCommands::Consent { provider, scope } => chorus::consent(&provider, &scope),
+            ChorusCommands::Revoke { provider } => chorus::revoke(&provider),
             ChorusCommands::Set { provider, key } => chorus::set_key(&provider, &key),
             ChorusCommands::Add {
                 name,

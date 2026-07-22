@@ -2,6 +2,8 @@ use velox_core::ai::{
     MODELS_FILE, PROVIDERS_FILE, ProviderConfig, env_var_for, has_key, load_providers, model_name,
     query_text_with, save_providers,
 };
+use velox_core::policy::{AgentPurpose, AgentRequest, PolicyError, execute_agent};
+use velox_core::privacy::ContextScope;
 
 fn get_system_context() -> String {
     velox_core::privacy::AiContext::from_snapshot(
@@ -12,78 +14,113 @@ fn get_system_context() -> String {
 }
 
 pub async fn ask(prompt: &str, model: &str, no_context: bool) {
+    // 최소 데이터만 담은 컨텍스트(Minimal). no_context면 데이터 없음.
     let full_prompt = if no_context {
         prompt.to_string()
     } else {
-        let context = get_system_context();
-        format!("{}\nUser question: {}", context, prompt)
+        format!("{}\nUser question: {}", get_system_context(), prompt)
     };
+    let label = if load_providers().iter().any(|p| p.name == model) {
+        format!("{model} (custom)")
+    } else {
+        model.to_string()
+    };
+    println!("Asking {label}...\n");
+    // 정책 게이트를 거친다 — 미승인 provider로 자동 대체(fallback)하지 않는다.
+    if let Some(text) = gated_text(
+        model,
+        AgentPurpose::Other,
+        ContextScope::Minimal,
+        full_prompt,
+    )
+    .await
+    {
+        println!("{text}");
+    }
+}
 
-    // 커스텀 provider면 query_text_with 로 직접 처리 (fallback은 내장 전용)
-    if load_providers().iter().any(|p| p.name == model) {
-        println!("Asking {} (custom)...\n", model);
-        match query_text_with(model, &full_prompt).await {
-            Some(t) => println!("{}", t),
-            None => println!("✗ {} 응답 실패 — URL/모델/키 확인", model),
+/// 정책 게이트([`execute_agent`])를 통과해 AI를 호출한다. 거부되면 이유(+동의 방법)를
+/// 출력하고 `None`. 대표 제품 경로(ask/diagnose/doctor)가 공유하는 진입점.
+pub async fn gated_text(
+    provider: &str,
+    purpose: AgentPurpose,
+    scope: ContextScope,
+    prompt: String,
+) -> Option<String> {
+    let req = AgentRequest {
+        provider: provider.to_string(),
+        purpose,
+        prompt,
+        scope,
+        requested_tools: std::collections::BTreeSet::new(),
+    };
+    match execute_agent(req).await {
+        Ok(r) => Some(r.text),
+        Err(PolicyError::CloudNotAllowed(p)) => {
+            println!("⚠ {p}: 클라우드 호출 미승인 — `velox chorus consent {p}` 로 동의 후 사용");
+            None
         }
+        Err(PolicyError::ScopeExceeded { requested, max }) => {
+            println!(
+                "⚠ 데이터 범위 초과(요청 {requested:?} > 허용 {max:?}) — `velox chorus consent {provider} --scope {}` 로 상향",
+                scope_label(requested)
+            );
+            None
+        }
+        Err(e) => {
+            println!("⚠ {e}");
+            None
+        }
+    }
+}
+
+fn scope_label(scope: ContextScope) -> &'static str {
+    match scope {
+        ContextScope::Minimal => "minimal",
+        ContextScope::System => "system",
+        ContextScope::Drivers => "drivers",
+    }
+}
+
+fn parse_scope(s: &str) -> Option<ContextScope> {
+    match s.trim().to_lowercase().as_str() {
+        "minimal" => Some(ContextScope::Minimal),
+        "system" => Some(ContextScope::System),
+        "drivers" => Some(ContextScope::Drivers),
+        _ => None,
+    }
+}
+
+/// provider별 클라우드 호출 동의. `velox chorus consent <provider> [--scope ...]`
+pub fn consent(provider: &str, scope: &str) {
+    if !velox_core::policy::provider_exists(provider) {
+        println!("✗ 알 수 없는 provider: {provider}");
         return;
     }
-
-    let fallback_order: Vec<&str> = match model {
-        "gpt" => vec!["gpt", "claude", "grok", "gemini"],
-        "gemini" => vec!["gemini", "claude", "gpt", "grok"],
-        "grok" => vec!["grok", "claude", "gpt", "gemini"],
-        _ => vec!["claude", "gpt", "grok", "gemini"],
-    };
-
-    for (i, m) in fallback_order.iter().enumerate() {
-        if i > 0 {
-            println!("⚠ Falling back to: {}\n", m);
-        }
-        let success = match *m {
-            "gpt" => try_gpt(&full_prompt).await,
-            "gemini" => try_gemini(&full_prompt).await,
-            "grok" => try_grok(&full_prompt).await,
-            _ => try_claude(&full_prompt).await,
-        };
-        if success {
+    let scope = match parse_scope(scope) {
+        Some(s) => s,
+        None => {
+            println!("✗ 알 수 없는 scope: {scope} (minimal / system / drivers)");
             return;
         }
+    };
+    if velox_core::policy::grant_consent(provider, scope) {
+        println!(
+            "✓ {provider} 클라우드 호출 동의됨 (scope={}, 부수효과는 여전히 사람 승인 필요)",
+            scope_label(scope)
+        );
+        println!("  철회: velox chorus revoke {provider}");
+    } else {
+        println!("✗ 동의 저장 실패");
     }
-
-    println!("✗ All models failed. Check your API keys.");
 }
 
-async fn try_claude(prompt: &str) -> bool {
-    println!("Asking Claude...\n");
-    print_reply("claude", prompt).await
-}
-
-async fn try_gpt(prompt: &str) -> bool {
-    println!("Asking GPT...\n");
-    print_reply("gpt", prompt).await
-}
-
-async fn try_gemini(prompt: &str) -> bool {
-    println!("Asking Gemini...\n");
-    print_reply("gemini", prompt).await
-}
-
-async fn try_grok(prompt: &str) -> bool {
-    println!("Asking Grok...\n");
-    print_reply("grok", prompt).await
-}
-
-async fn print_reply(provider: &str, prompt: &str) -> bool {
-    match query_text_with(provider, prompt).await {
-        Some(text) => {
-            println!("{}", text);
-            true
-        }
-        None => {
-            println!("✗ {} request failed — key/network/model check", provider);
-            false
-        }
+/// provider 동의 철회. `velox chorus revoke <provider>`
+pub fn revoke(provider: &str) {
+    if velox_core::policy::revoke_consent(provider) {
+        println!("✓ {provider} 동의 철회됨 → deny-by-default");
+    } else {
+        println!("✗ 철회 저장 실패");
     }
 }
 

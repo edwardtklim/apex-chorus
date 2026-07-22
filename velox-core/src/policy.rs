@@ -129,6 +129,30 @@ pub fn policy_for(provider: &str) -> AgentPolicy {
         .unwrap_or_default()
 }
 
+/// UI/CLI의 **명시적 사용자 동의** 후에만 호출 — 이 provider에 클라우드 호출을 연다.
+/// 정책 파일이 없다고 자동으로 열리지 않는다(이 함수만이 연다). 저장값:
+/// `allow_cloud=true`, `max_context_scope=scope`, `allowed_tools=[]`, `require_confirmation=true`.
+pub fn grant_consent(provider: &str, scope: ContextScope) -> bool {
+    let mut store = load_policies();
+    store.insert(
+        canonical_provider(provider),
+        AgentPolicy {
+            allow_cloud: true,
+            max_context_scope: scope,
+            allowed_tools: BTreeSet::new(),
+            require_confirmation: true,
+        },
+    );
+    save_policies(&store)
+}
+
+/// 동의 철회 — provider 정책을 제거해 deny-by-default로 되돌린다.
+pub fn revoke_consent(provider: &str) -> bool {
+    let mut store = load_policies();
+    store.remove(&canonical_provider(provider));
+    save_policies(&store)
+}
+
 fn is_builtin(provider: &str) -> bool {
     matches!(
         provider.to_lowercase().as_str(),
