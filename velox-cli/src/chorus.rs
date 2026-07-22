@@ -113,6 +113,7 @@ pub fn add_provider(name: &str, base_url: &str, model: &str, key: &str) {
         base_url: base_url.to_string(),
         model: model.to_string(),
         api_key: key.to_string(),
+        local: false,
     });
     if save_providers(&ps) {
         println!(
@@ -490,6 +491,7 @@ pub fn show_models() {
             key,
             role
         );
+        println!("         policy: {}", fmt_policy(name));
     }
     let custom = load_providers();
     if !custom.is_empty() {
@@ -504,26 +506,39 @@ pub fn show_models() {
                 "{:8} model={:<24} [{}]  {}",
                 p.name, p.model, key, p.base_url
             );
+            println!("         policy: {}", fmt_policy(&p.name));
         }
     }
-
-    // Agent Policy — 아직 provider별로 적용되진 않음(Step C). 현재 강제되는 기본 정책을 보여준다.
-    let pol = velox_core::policy::AgentPolicy::default();
-    println!("\n[Agent Policy — 기본값 · Step C에서 provider별 적용 예정]");
     println!(
-        "scope={:?} · tools={} · cloud={} · confirm={}",
-        pol.max_context_scope,
-        if pol.allowed_tools.is_empty() {
-            "none".to_string()
-        } else {
-            pol.allowed_tools.join(",")
-        },
-        pol.allow_cloud,
-        if pol.require_confirmation {
+        "\n※ Agent Policy: deny-by-default (강제 게이트 = execute_agent). 설정 파일 {}.",
+        velox_core::policy::POLICIES_FILE
+    );
+    println!();
+}
+
+/// provider의 유효 정책을 한 줄 요약. (velox_policies.json 없으면 안전 기본값 = deny)
+fn fmt_policy(provider: &str) -> String {
+    let p = velox_core::policy::policy_for(provider);
+    let loc = velox_core::policy::provider_location(provider);
+    let tools = if p.allowed_tools.is_empty() {
+        "none".to_string()
+    } else {
+        p.allowed_tools
+            .iter()
+            .map(|t| format!("{t:?}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    format!(
+        "loc={:?} cloud={} scope={:?} tools={} confirm={}",
+        loc,
+        if p.allow_cloud { "on" } else { "off" },
+        p.max_context_scope,
+        tools,
+        if p.require_confirmation {
             "required"
         } else {
             "off"
         }
-    );
-    println!();
+    )
 }

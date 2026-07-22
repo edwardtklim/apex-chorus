@@ -27,6 +27,7 @@ velox_daemon.log
 velox_timeline.csv
 velox_providers.json
 velox_models.json
+velox_policies.json
 velox_profile.json
 velox_baseline.json
 daemon_out.txt

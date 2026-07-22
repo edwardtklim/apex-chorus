@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::snapshot::Snapshot;
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+/// 데이터 범위. 선언 순서 = 확대(escalation) 순서 — `Minimal < System < Drivers`.
+/// 이 순서로 `PartialOrd`/`Ord`를 파생해 정책의 scope 초과 검사에 쓴다.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextScope {
     /// Only load/temperature/power state. Default for remote AI providers.

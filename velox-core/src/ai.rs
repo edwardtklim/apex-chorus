@@ -99,7 +99,7 @@ pub fn load_models() -> ModelConfig {
 }
 
 /// 원자적 파일 쓰기 — 임시 파일에 쓴 뒤 rename. 쓰다가 죽어도 원본이 깨지지 않는다.
-fn atomic_write(path: &str, contents: &str) -> std::io::Result<()> {
+pub(crate) fn atomic_write(path: &str, contents: &str) -> std::io::Result<()> {
     let tmp = format!("{path}.tmp");
     std::fs::write(&tmp, contents)?;
     std::fs::rename(&tmp, path)
@@ -365,6 +365,10 @@ pub struct ProviderConfig {
     pub model: String,
     #[serde(default)]
     pub api_key: String,
+    /// 명시적으로 로컬(오프라인/사설) provider로 표시. `policy`가 이 값 + loopback
+    /// 엔드포인트를 함께 확인해야만 Local로 취급한다 (기본 false = Cloud).
+    #[serde(default)]
+    pub local: bool,
 }
 
 pub fn load_providers() -> Vec<ProviderConfig> {
