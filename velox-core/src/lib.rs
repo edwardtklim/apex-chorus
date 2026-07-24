@@ -13,6 +13,7 @@ pub mod ai;
 pub mod benchmark;
 pub mod checkpoint;
 pub mod credentials;
+pub mod evidence;
 pub mod health;
 pub mod policy;
 pub mod privacy;
