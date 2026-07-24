@@ -14,6 +14,8 @@
 //!
 //! IO(네트워크)와 순수 판단 로직을 분리해 게이트·파싱·판정을 단위 테스트한다.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
@@ -239,24 +241,45 @@ fn reviser_prompt(
 
 // ---------------- IO 오케스트레이션 ----------------
 
-/// 한 역할을 정책 게이트를 통해 호출. 실패 사유를 문자열로 돌려준다(자동 대체 없음).
-async fn ask_role(
-    provider: &str,
-    purpose: AgentPurpose,
-    scope: ContextScope,
-    prompt: String,
-) -> Result<String, String> {
-    let req = AgentRequest {
-        provider: provider.to_string(),
-        purpose,
-        prompt,
-        scope,
-        requested_tools: std::collections::BTreeSet::new(),
-    };
-    match execute_agent(req).await {
-        Ok(r) => Ok(r.text),
-        Err(PolicyError::CloudNotAllowed(p)) => Err(format!("{p} 미동의 (consent 필요)")),
-        Err(e) => Err(e.to_string()),
+type RoleFuture<'a> = Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>;
+
+/// 역할(AI)을 호출하는 방법. 실제 경로는 정책 게이트를 통과하는 [`LiveCaller`]이고,
+/// 테스트는 스크립트된 응답을 주입해 상태 기계를 네트워크 없이 검증한다.
+pub trait RoleCaller: Sync {
+    fn call<'a>(
+        &'a self,
+        provider: &'a str,
+        purpose: AgentPurpose,
+        scope: ContextScope,
+        prompt: String,
+    ) -> RoleFuture<'a>;
+}
+
+/// 실제 호출 — 반드시 [`execute_agent`]를 거친다(동의·범위·툴 권한 강제, 자동 대체 없음).
+struct LiveCaller;
+
+impl RoleCaller for LiveCaller {
+    fn call<'a>(
+        &'a self,
+        provider: &'a str,
+        purpose: AgentPurpose,
+        scope: ContextScope,
+        prompt: String,
+    ) -> RoleFuture<'a> {
+        Box::pin(async move {
+            let req = AgentRequest {
+                provider: provider.to_string(),
+                purpose,
+                prompt,
+                scope,
+                requested_tools: std::collections::BTreeSet::new(),
+            };
+            match execute_agent(req).await {
+                Ok(r) => Ok(r.text),
+                Err(PolicyError::CloudNotAllowed(p)) => Err(format!("{p} 미동의 (consent 필요)")),
+                Err(e) => Err(e.to_string()),
+            }
+        })
     }
 }
 
@@ -267,6 +290,15 @@ fn proposal_to_json(p: &TypedProposal) -> String {
 /// Council 실행. 아무 것도 실행하지 않고 [`CouncilDecision`]만 돌려준다.
 /// `cancel`이 참이 되면 다음 단계 진입 전에 [`CouncilStatus::Cancelled`]로 멈춘다.
 pub async fn run(req: CouncilRequest, cancel: &AtomicBool) -> CouncilDecision {
+    run_with(req, cancel, &LiveCaller).await
+}
+
+/// 호출자를 주입할 수 있는 Council 실행(테스트용 seam). 프로덕션은 [`run`]을 쓴다.
+pub async fn run_with(
+    req: CouncilRequest,
+    cancel: &AtomicBool,
+    caller: &dyn RoleCaller,
+) -> CouncilDecision {
     let scope = req.evidence.approved_scope;
     // Gate 사전조건: Evidence 범위가 사용자 승인 범위를 넘지 않아야 한다.
     if req.evidence.approved_scope > req.approved_scope {
@@ -281,13 +313,14 @@ pub async fn run(req: CouncilRequest, cancel: &AtomicBool) -> CouncilDecision {
     if cancel.load(Ordering::Relaxed) {
         return CouncilDecision::terminal(CouncilStatus::Cancelled, vec![]);
     }
-    let proposal = match ask_role(
-        PROPOSER,
-        AgentPurpose::Propose,
-        scope,
-        proposer_prompt(&req.objective, &evidence),
-    )
-    .await
+    let proposal = match caller
+        .call(
+            PROPOSER,
+            AgentPurpose::Propose,
+            scope,
+            proposer_prompt(&req.objective, &evidence),
+        )
+        .await
     {
         Ok(text) => match parse_proposal(&text) {
             Some(p) => p,
@@ -314,13 +347,14 @@ pub async fn run(req: CouncilRequest, cancel: &AtomicBool) -> CouncilDecision {
     if cancel.load(Ordering::Relaxed) {
         return CouncilDecision::terminal(CouncilStatus::Cancelled, vec![]);
     }
-    let (verdict, reasons) = match ask_role(
-        REVIEWER,
-        AgentPurpose::Review,
-        scope,
-        reviewer_prompt(&req.objective, &evidence, &proposal_to_json(&proposal)),
-    )
-    .await
+    let (verdict, reasons) = match caller
+        .call(
+            REVIEWER,
+            AgentPurpose::Review,
+            scope,
+            reviewer_prompt(&req.objective, &evidence, &proposal_to_json(&proposal)),
+        )
+        .await
     {
         Ok(text) => match parse_review(&text) {
             Some(v) => v,
@@ -347,18 +381,19 @@ pub async fn run(req: CouncilRequest, cancel: &AtomicBool) -> CouncilDecision {
             if cancel.load(Ordering::Relaxed) {
                 return CouncilDecision::terminal(CouncilStatus::Cancelled, vec![]);
             }
-            let revised = match ask_role(
-                REVISER,
-                AgentPurpose::Revise,
-                scope,
-                reviser_prompt(
-                    &req.objective,
-                    &evidence,
-                    &proposal_to_json(&proposal),
-                    &reasons,
-                ),
-            )
-            .await
+            let revised = match caller
+                .call(
+                    REVISER,
+                    AgentPurpose::Revise,
+                    scope,
+                    reviser_prompt(
+                        &req.objective,
+                        &evidence,
+                        &proposal_to_json(&proposal),
+                        &reasons,
+                    ),
+                )
+                .await
             {
                 Ok(text) => match parse_proposal(&text) {
                     Some(p) => p,
@@ -382,13 +417,14 @@ pub async fn run(req: CouncilRequest, cancel: &AtomicBool) -> CouncilDecision {
             if cancel.load(Ordering::Relaxed) {
                 return CouncilDecision::terminal(CouncilStatus::Cancelled, vec![]);
             }
-            let (v2, r2) = match ask_role(
-                REVIEWER,
-                AgentPurpose::Review,
-                scope,
-                reviewer_prompt(&req.objective, &evidence, &proposal_to_json(&revised)),
-            )
-            .await
+            let (v2, r2) = match caller
+                .call(
+                    REVIEWER,
+                    AgentPurpose::Review,
+                    scope,
+                    reviewer_prompt(&req.objective, &evidence, &proposal_to_json(&revised)),
+                )
+                .await
             {
                 Ok(text) => match parse_review(&text) {
                     Some(v) => v,
@@ -585,5 +621,116 @@ mod tests {
         assert!(d.proposal.is_some());
         assert_eq!(d.evidence_used.len(), 2);
         assert!(!d.requires_human_confirmation); // read-only
+    }
+
+    // --- 전체 상태 기계: 스크립트된 역할 응답 주입(네트워크 없음) ---
+
+    struct Scripted {
+        queue: std::sync::Mutex<std::collections::VecDeque<Result<String, String>>>,
+    }
+    impl Scripted {
+        fn new(items: Vec<Result<String, String>>) -> Self {
+            Self {
+                queue: std::sync::Mutex::new(items.into_iter().collect()),
+            }
+        }
+    }
+    impl RoleCaller for Scripted {
+        fn call<'a>(
+            &'a self,
+            _provider: &'a str,
+            _purpose: AgentPurpose,
+            _scope: ContextScope,
+            _prompt: String,
+        ) -> RoleFuture<'a> {
+            let r = self
+                .queue
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Err("스크립트 응답 없음".into()));
+            Box::pin(async move { r })
+        }
+    }
+
+    const PJSON: &str =
+        r#"{"summary":"과열","findings":[{"statement":"CPU 95%/92C","evidence":["e1","e2"]}]}"#;
+
+    fn ok(s: &str) -> Result<String, String> {
+        Ok(s.into())
+    }
+
+    async fn run_scripted(script: Vec<Result<String, String>>) -> CouncilDecision {
+        let req = CouncilRequest {
+            objective: "왜 뜨겁나".into(),
+            evidence: bundle(),
+            approved_scope: ContextScope::Minimal,
+        };
+        run_with(req, &AtomicBool::new(false), &Scripted::new(script)).await
+    }
+
+    #[tokio::test]
+    async fn flow_approve_reaches_approved() {
+        let d = run_scripted(vec![
+            ok(PJSON),
+            ok(r#"{"verdict":"approve","reasons":["근거 충분"]}"#),
+        ])
+        .await;
+        assert_eq!(d.status, CouncilStatus::Approved);
+        assert!(d.proposal.is_some());
+        assert_eq!(d.evidence_used.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn flow_reviewer_reject_terminates() {
+        let d = run_scripted(vec![
+            ok(PJSON),
+            ok(r#"{"verdict":"reject","reasons":["근거 부족"]}"#),
+        ])
+        .await;
+        assert_eq!(d.status, CouncilStatus::Rejected);
+        assert!(d.reviewer_reasons.iter().any(|r| r.contains("근거 부족")));
+    }
+
+    #[tokio::test]
+    async fn flow_revise_then_approve() {
+        let d = run_scripted(vec![
+            ok(PJSON),
+            ok(r#"{"verdict":"revise","reasons":["더 구체적으로"]}"#),
+            ok(PJSON), // 수정본
+            ok(r#"{"verdict":"approve","reasons":["이제 충분"]}"#),
+        ])
+        .await;
+        assert_eq!(d.status, CouncilStatus::Approved);
+    }
+
+    #[tokio::test]
+    async fn flow_second_revise_hits_iteration_limit() {
+        let d = run_scripted(vec![
+            ok(PJSON),
+            ok(r#"{"verdict":"revise","reasons":["r1"]}"#),
+            ok(PJSON),
+            ok(r#"{"verdict":"revise","reasons":["r2"]}"#),
+        ])
+        .await;
+        assert_eq!(d.status, CouncilStatus::Inconclusive);
+        assert!(d.reviewer_reasons.iter().any(|r| r.contains("반복 한도")));
+    }
+
+    #[tokio::test]
+    async fn flow_provider_failure_is_inconclusive_no_fallback() {
+        let d = run_scripted(vec![Err("claude 미동의".into())]).await;
+        assert_eq!(d.status, CouncilStatus::Inconclusive);
+        assert!(
+            d.reviewer_reasons
+                .iter()
+                .any(|r| r.contains("제안자 호출 실패"))
+        );
+    }
+
+    #[tokio::test]
+    async fn flow_unparseable_proposal_is_inconclusive() {
+        let d = run_scripted(vec![ok("죄송하지만 JSON이 아닙니다")]).await;
+        assert_eq!(d.status, CouncilStatus::Inconclusive);
     }
 }
