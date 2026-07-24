@@ -161,6 +161,8 @@ hardware. Read-only at most.
 
 ## Roadmap
 
+Detailed engineering handoff and version gates: [CLAUDE_HANDOFF.md](CLAUDE_HANDOFF.md)
+
 - **v0.8 — Chorus provider architecture ✅:** custom providers (`chorus add`, OpenAI-
   compatible — OpenRouter, local Ollama, custom endpoints), **semantic routing**, multi-AI
   **consensus**, and a multi-judge **model benchmark** (`chorus bench`, 0–1000 scale).
