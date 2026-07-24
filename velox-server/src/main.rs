@@ -12,7 +12,7 @@ use axum::middleware::{self, Next};
 use axum::response::Html;
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -46,6 +46,9 @@ async fn main() {
         .route("/report/benchmark", post(cpu_benchmark))
         .route("/keys", post(save_keys))
         .route("/keys/status", get(keys_status))
+        .route("/policies/status", get(policies_status))
+        .route("/policies/consent", post(policies_consent))
+        .route("/policies/:provider", delete(policies_revoke))
         .route("/run/:cmd", get(run_cmd))
         .route("/diagnose/stream", get(diagnose_stream))
         .route("/version", get(version))
@@ -222,6 +225,43 @@ async fn keys_status() -> Json<serde_json::Value> {
         "gemini": velox_core::ai::has_key("gemini"),
         "grok": velox_core::ai::has_key("grok"),
     }))
+}
+
+const BUILTIN_PROVIDERS: [&str; 4] = ["claude", "gpt", "gemini", "grok"];
+
+/// provider별 정책 요약 (키·툴·정책 원문 없음). 앱이 어떤 provider가 동의됐는지 표시하는 용도.
+async fn policies_status() -> Json<serde_json::Value> {
+    let providers: Vec<velox_core::policy::ProviderPolicyStatus> = BUILTIN_PROVIDERS
+        .iter()
+        .map(|p| velox_core::policy::policy_status(p))
+        .collect();
+    Json(serde_json::json!({ "providers": providers }))
+}
+
+/// 사용자의 명시적 클릭으로만 호출되는 Cloud 호출 동의. scope는 enum 검증됨.
+#[derive(Deserialize)]
+struct ConsentReq {
+    provider: String,
+    #[serde(default)]
+    scope: velox_core::privacy::ContextScope,
+}
+
+/// provider별 Cloud 동의 저장 (allowed_tools=[], require_confirmation=true 고정은 grant_consent가 강제).
+async fn policies_consent(Json(req): Json<ConsentReq>) -> Json<serde_json::Value> {
+    if !velox_core::policy::provider_exists(&req.provider) {
+        return Json(serde_json::json!({ "ok": false, "error": "unknown_provider" }));
+    }
+    let ok = velox_core::policy::grant_consent(&req.provider, req.scope);
+    Json(serde_json::json!({
+        "ok": ok,
+        "status": velox_core::policy::policy_status(&req.provider),
+    }))
+}
+
+/// provider 동의 철회.
+async fn policies_revoke(Path(provider): Path<String>) -> Json<serde_json::Value> {
+    let ok = velox_core::policy::revoke_consent(&provider);
+    Json(serde_json::json!({ "ok": ok }))
 }
 
 #[derive(Deserialize, Default)]

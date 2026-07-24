@@ -129,6 +129,28 @@ pub fn policy_for(provider: &str) -> AgentPolicy {
         .unwrap_or_default()
 }
 
+/// UI/CLI에 노출해도 안전한 정책 요약 — **키·툴 목록·정책 원문은 담지 않는다.**
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ProviderPolicyStatus {
+    pub provider: String,
+    pub location: ProviderLocation,
+    pub cloud_allowed: bool,
+    pub max_context_scope: ContextScope,
+    pub require_confirmation: bool,
+}
+
+/// provider의 안전 정책 요약. (allowed_tools·키는 의도적으로 제외 — 노출 최소화)
+pub fn policy_status(provider: &str) -> ProviderPolicyStatus {
+    let p = policy_for(provider);
+    ProviderPolicyStatus {
+        provider: canonical_provider(provider),
+        location: provider_location(provider),
+        cloud_allowed: p.allow_cloud,
+        max_context_scope: p.max_context_scope,
+        require_confirmation: p.require_confirmation,
+    }
+}
+
 /// UI/CLI의 **명시적 사용자 동의** 후에만 호출 — 이 provider에 클라우드 호출을 연다.
 /// 정책 파일이 없다고 자동으로 열리지 않는다(이 함수만이 연다). 저장값:
 /// `allow_cloud=true`, `max_context_scope=scope`, `allowed_tools=[]`, `require_confirmation=true`.
