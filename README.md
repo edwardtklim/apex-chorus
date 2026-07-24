@@ -55,7 +55,7 @@ the caller presents.**
 | `velox diagnose [--fix] [--simulate-hot]` | AI proposes a safe, reversible action; applies it on approval |
 | `velox checkpoint save\|list\|restore` | Snapshot a known-good state; roll back later |
 | `velox daemon [--interval N] [--auto]` | Background monitor; fires the AI loop on a *sustained* anomaly |
-| `velox chorus ask\|models\|set\|add\|test\|bench\|consensus` | Multi-AI: **semantic** auto-routing · add custom providers (OpenRouter/Ollama) · set keys · verify · model **benchmark** (multi-judge) · **consensus** |
+| `velox chorus ask\|models\|model\|consent\|set\|add\|test\|bench\|consensus` | Multi-AI **through the policy gateway**: per-provider **consent**/revoke · configurable **model** IDs · semantic routing · custom providers (OpenRouter/Ollama) · set/verify keys · model **benchmark** · **consensus** |
 
 ---
 
@@ -130,21 +130,31 @@ Claude / GPT / Gemini / Grok APIs · `clap` · `tokio` · `reqwest`
 
 ---
 
-## Status (v0.14.0 — alpha)
+## Status (v0.15.0 — alpha)
 
-All workspace crates share one version. Pulse starts its local server on a random
-loopback port with a per-launch session token, verifies startup, and shuts the child
-server down with the app. Health and CPU benchmark results now come from structured
-`velox-core` reports shared by the CLI and local API.
+**Policy-enforced multi-AI foundation.** Every cloud-AI call in a product path goes through
+one gateway (`execute_agent`) that enforces a per-provider **Agent Policy**: cloud calls are
+**deny-by-default** until the user grants consent (per provider, with a maximum data scope),
+and `query_text_with` is compile-locked `pub(crate)` so nothing bypasses it. AI payloads are
+generated **only** from a typed, scope-validated `EvidenceBundle` — never a hand-built string.
+A read-only **Council** (Claude proposes → GPT reviews → a deterministic APEX gate) turns
+multiple AIs into a checked recommendation that **executes nothing**; every finding must cite
+an EvidenceId present in the bundle.
 
-**Privacy:** remote AI receives the minimum context by default. The user can explicitly
-choose `minimal`, `system`, or `drivers`; the exact serialized payload is previewed in
-the diagnosis transcript before it is sent.
+Workspace crates share one version. Pulse starts its local server on a random loopback port
+with a per-launch session token, verifies startup, and shuts the child server down with the app.
+Health and CPU benchmark results come from structured `velox-core` reports shared by CLI and API.
 
-**Safety boundary:** Pulse exposes structured read-only reports and dry-run diagnosis only.
-Real actions remain in the CLI behind a whitelist, human approval, a power-plan checkpoint,
-verification, and rollback. The checkpoint currently restores APEX-managed power-plan changes;
-it is not a full Windows restore point.
+**Privacy & consent:** cloud AI is off until you consent per provider (`chorus consent
+<provider> [--scope minimal|system|drivers]`, or in-app before a diagnosis/Council run). The
+payload is built from typed Evidence at or below the approved scope and previewed before it is
+sent. Corrupt policy / evidence / model files fail closed.
+
+**Safety boundary:** Pulse exposes structured read-only reports, dry-run diagnosis, and the
+read-only Council (which returns a decision only — it never executes an action). Real system
+actions remain in the CLI behind a whitelist, human approval, a power-plan checkpoint,
+verification, and rollback. The checkpoint restores APEX-managed power-plan changes; it is not
+a full Windows restore point. Executable, approved project/system actions are a later version.
 
 **Performance suite:** `bench` (incl. sustained/throttle `stability`) + `timeline`
 (track regressions vs your personal best). **Advisory tools** (read-only, AI advice):
@@ -169,8 +179,10 @@ Detailed engineering handoff and version gates: [CLAUDE_HANDOFF.md](CLAUDE_HANDO
 - **v0.9 — Core extraction ✅:** workspace split (`velox-core` engine + `velox-cli` interface).
 - **v0.14 — Product core ✅:** unified versions; structured Health/Benchmark/Snapshot
   flows; native credential storage; minimum-data AI policy; authenticated random-port app bridge.
-- **v0.15 — Field test:** cancellable background jobs, repair-session report export,
-  two-PC validation, installer cleanup and error UX.
+- **v0.15 — Policy-enforced multi-AI foundation ✅:** per-provider **Agent Policy** gateway
+  (deny-by-default), cloud **consent** (CLI + in-app), typed **Evidence** engine, and a
+  read-only **Council** (Claude → GPT → deterministic gate) surfaced in Pulse. All product
+  AI payloads come from Evidence only. *(Real repair-workflow field test moves to v0.20.)*
 - **v1.0 — Stable release:** config file, installer, docs, **code signing** (so Smart App
   Control users can run it), polished UX. First public CLI.
 - **Beyond:** provider adapters for GPT/Claude/Ollama-compatible desktop models, consented
