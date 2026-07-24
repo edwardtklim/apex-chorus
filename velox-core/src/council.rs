@@ -91,6 +91,44 @@ impl CouncilDecision {
     }
 }
 
+/// Council 진행 이벤트 — **Core가 상태 전이**하며 내보내고, **Server가 SSE로 변환**한다.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+pub enum CouncilEvent {
+    Evidence {
+        scope: ContextScope,
+        items: usize,
+    },
+    Proposed {
+        summary: String,
+        findings: usize,
+    },
+    Reviewed {
+        verdict: String,
+        reasons: Vec<String>,
+    },
+    Revised {
+        summary: String,
+        findings: usize,
+    },
+    Gated {
+        passed: bool,
+        reasons: Vec<String>,
+    },
+}
+
+/// 진행 이벤트 싱크. 네트워크/스레드 경계를 넘도록 `Sync`. (표시 안 할 땐 `&|_| {}`)
+pub type EventSink<'a> = &'a (dyn Fn(&CouncilEvent) + Sync);
+
+fn verdict_str(v: ReviewVerdict) -> String {
+    match v {
+        ReviewVerdict::Approve => "approve",
+        ReviewVerdict::Revise => "revise",
+        ReviewVerdict::Reject => "reject",
+    }
+    .into()
+}
+
 // ---------------- 순수 로직 (네트워크 없음, 테스트 대상) ----------------
 
 /// 문자열에서 JSON 본문만 추출(마크다운/설명으로 감싼 응답 대비).
@@ -289,8 +327,12 @@ fn proposal_to_json(p: &TypedProposal) -> String {
 
 /// Council 실행. 아무 것도 실행하지 않고 [`CouncilDecision`]만 돌려준다.
 /// `cancel`이 참이 되면 다음 단계 진입 전에 [`CouncilStatus::Cancelled`]로 멈춘다.
-pub async fn run(req: CouncilRequest, cancel: &AtomicBool) -> CouncilDecision {
-    run_with(req, cancel, &LiveCaller).await
+pub async fn run(
+    req: CouncilRequest,
+    cancel: &AtomicBool,
+    on_event: EventSink<'_>,
+) -> CouncilDecision {
+    run_with(req, cancel, &LiveCaller, on_event).await
 }
 
 /// 호출자를 주입할 수 있는 Council 실행(테스트용 seam). 프로덕션은 [`run`]을 쓴다.
@@ -298,6 +340,7 @@ pub async fn run_with(
     req: CouncilRequest,
     cancel: &AtomicBool,
     caller: &dyn RoleCaller,
+    on_event: EventSink<'_>,
 ) -> CouncilDecision {
     let scope = req.evidence.approved_scope;
     // Gate 사전조건: Evidence 범위가 사용자 승인 범위를 넘지 않아야 한다.
@@ -307,6 +350,10 @@ pub async fn run_with(
             vec!["Evidence 범위가 승인 범위를 초과".into()],
         );
     }
+    on_event(&CouncilEvent::Evidence {
+        scope,
+        items: req.evidence.items.len(),
+    });
     let evidence = req.evidence.to_prompt();
 
     // 1) 제안 (Claude)
@@ -338,6 +385,10 @@ pub async fn run_with(
             );
         }
     };
+    on_event(&CouncilEvent::Proposed {
+        summary: proposal.summary.clone(),
+        findings: proposal.findings.len(),
+    });
     // 사전 Gate (검토 전 구조 검증)
     if let Err(reasons) = gate(&proposal, &req.evidence, PROPOSER, REVIEWER) {
         return CouncilDecision::terminal(CouncilStatus::Inconclusive, reasons);
@@ -372,10 +423,14 @@ pub async fn run_with(
             );
         }
     };
+    on_event(&CouncilEvent::Reviewed {
+        verdict: verdict_str(verdict),
+        reasons: reasons.clone(),
+    });
 
     match verdict {
         ReviewVerdict::Reject => CouncilDecision::terminal(CouncilStatus::Rejected, reasons),
-        ReviewVerdict::Approve => finalize(proposal, &req.evidence, reasons),
+        ReviewVerdict::Approve => gated_finalize(proposal, &req.evidence, reasons, on_event),
         ReviewVerdict::Revise => {
             // 3) 수정 (Claude) → 재검토 (GPT). 재수정 요구는 최대 1회 → 그 이상은 Inconclusive.
             if cancel.load(Ordering::Relaxed) {
@@ -411,6 +466,10 @@ pub async fn run_with(
                     );
                 }
             };
+            on_event(&CouncilEvent::Revised {
+                summary: revised.summary.clone(),
+                findings: revised.findings.len(),
+            });
             if let Err(reasons) = gate(&revised, &req.evidence, REVISER, REVIEWER) {
                 return CouncilDecision::terminal(CouncilStatus::Inconclusive, reasons);
             }
@@ -442,8 +501,12 @@ pub async fn run_with(
                     );
                 }
             };
+            on_event(&CouncilEvent::Reviewed {
+                verdict: verdict_str(v2),
+                reasons: r2.clone(),
+            });
             match v2 {
-                ReviewVerdict::Approve => finalize(revised, &req.evidence, r2),
+                ReviewVerdict::Approve => gated_finalize(revised, &req.evidence, r2, on_event),
                 ReviewVerdict::Reject => CouncilDecision::terminal(CouncilStatus::Rejected, r2),
                 // 재수정 요구 = 반복 한도(1회) 초과 → Inconclusive.
                 ReviewVerdict::Revise => CouncilDecision::terminal(CouncilStatus::Inconclusive, {
@@ -454,6 +517,21 @@ pub async fn run_with(
             }
         }
     }
+}
+
+/// 최종 Gate를 걸고 그 결과를 이벤트로 알린 뒤 결정을 만든다.
+fn gated_finalize(
+    proposal: TypedProposal,
+    bundle: &EvidenceBundle,
+    reasons: Vec<String>,
+    on_event: EventSink<'_>,
+) -> CouncilDecision {
+    let g = gate(&proposal, bundle, PROPOSER, REVIEWER);
+    on_event(&CouncilEvent::Gated {
+        passed: g.is_ok(),
+        reasons: g.as_ref().err().cloned().unwrap_or_default(),
+    });
+    finalize(proposal, bundle, reasons)
 }
 
 /// Approve 판정 후 최종 Gate를 다시 걸고 결정을 만든다.
@@ -585,7 +663,7 @@ mod tests {
             approved_scope: ContextScope::Minimal,
         };
         let cancel = AtomicBool::new(true);
-        let d = run(req, &cancel).await;
+        let d = run(req, &cancel, &|_: &CouncilEvent| {}).await;
         assert_eq!(d.status, CouncilStatus::Cancelled);
     }
 
@@ -610,7 +688,7 @@ mod tests {
             evidence: sys_bundle,
             approved_scope: ContextScope::Minimal,
         };
-        let d = run(req, &AtomicBool::new(false)).await;
+        let d = run(req, &AtomicBool::new(false), &|_: &CouncilEvent| {}).await;
         assert_eq!(d.status, CouncilStatus::Inconclusive);
     }
 
@@ -666,7 +744,41 @@ mod tests {
             evidence: bundle(),
             approved_scope: ContextScope::Minimal,
         };
-        run_with(req, &AtomicBool::new(false), &Scripted::new(script)).await
+        run_with(
+            req,
+            &AtomicBool::new(false),
+            &Scripted::new(script),
+            &|_: &CouncilEvent| {},
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn flow_emits_stage_events_in_order() {
+        let events = std::sync::Mutex::new(Vec::new());
+        let sink = |e: &CouncilEvent| events.lock().unwrap().push(e.clone());
+        let req = CouncilRequest {
+            objective: "o".into(),
+            evidence: bundle(),
+            approved_scope: ContextScope::Minimal,
+        };
+        let script = Scripted::new(vec![ok(PJSON), ok(r#"{"verdict":"approve","reasons":[]}"#)]);
+        let d = run_with(req, &AtomicBool::new(false), &script, &sink).await;
+        assert_eq!(d.status, CouncilStatus::Approved);
+        let evs = events.lock().unwrap();
+        assert!(matches!(evs.first(), Some(CouncilEvent::Evidence { .. })));
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e, CouncilEvent::Proposed { .. }))
+        );
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e, CouncilEvent::Reviewed { .. }))
+        );
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e, CouncilEvent::Gated { passed: true, .. }))
+        );
     }
 
     #[tokio::test]
