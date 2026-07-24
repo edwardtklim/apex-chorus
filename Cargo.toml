@@ -3,6 +3,6 @@ resolver = "2"
 members = ["velox-core", "velox-cli", "velox-server", "velox-app"]
 
 [workspace.package]
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 license = "MIT"
