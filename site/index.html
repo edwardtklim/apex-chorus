@@ -105,7 +105,7 @@
     <h2>Diagnose</h2>
     <p class="rsub">AI 2명(Claude · GPT)이 시스템을 진단하는 걸 실시간으로 봅니다. 읽기 전용.</p>
     <div class="btnrow">
-      <button class="btn" onclick="diagnoseChat()">진단 시작 · live</button>
+      <button class="btn" onclick="startDiagnose()">진단 시작 · live</button>
       <button class="btn ghost" id="diag-cancel" style="display:none" onclick="cancelDiag()">진단 취소</button>
     </div>
     <label class="muted" style="font-size:13px">이 AI에게 보낼 시스템 데이터</label>
@@ -294,6 +294,46 @@ function compareBaseline(){ var st=document.getElementById('snap-status'), out=d
     (d.removed||[]).forEach(function(x){ h+='<div class="r"><span>삭제</span><b>- '+esc(x)+'</b></div>'; });
     out.innerHTML='<div class="card">'+h+'</div>';
   }).catch(function(){ st.textContent='비교 실패.'; });
+}
+
+// --- Consent gate: diagnose 전에 미동의 Provider를 앱에서 직접 동의받는다 (CLI 불필요) ---
+var SCOPE_RANK={minimal:0,system:1,drivers:2};
+var SCOPE_DESC={minimal:'사용률 · 온도 · 전원 모드',system:'+ CPU · RAM · OS · GPU 이름',drivers:'+ 장치명과 드라이버 버전'};
+var DIAG_PROVIDERS=['claude','gpt']; // diagnose 파이프라인이 쓰는 Provider
+function startDiagnose(){
+  var scope=val('ai-scope')||'minimal';
+  var chat=document.getElementById('chat'); chat.innerHTML='';
+  fetch('/policies/status').then(j).then(function(res){
+    var map={}; (res.providers||[]).forEach(function(p){ map[p.provider]=p; });
+    var need=DIAG_PROVIDERS.filter(function(name){
+      var p=map[name];
+      if(!p||!p.cloud_allowed) return true;               // 미동의
+      return SCOPE_RANK[p.max_context_scope]<SCOPE_RANK[scope]; // 동의 범위가 부족
+    });
+    if(need.length===0){ diagnoseChat(); return; }
+    renderConsentGate(need,scope);
+  }).catch(function(){ diagnoseChat(); }); // status 실패해도 서버 게이트가 최종 방어
+}
+function renderConsentGate(need,scope){
+  var chat=document.getElementById('chat');
+  var card=el('div','bubble sys');
+  card.appendChild(el('div','who','동의 필요'));
+  card.appendChild(el('div','','아래 AI에게 시스템 데이터를 보내려면 동의가 필요합니다: '+need.join(', ')));
+  card.appendChild(el('div','muted','전송 범위 ['+scope+']: '+(SCOPE_DESC[scope]||scope)));
+  card.appendChild(el('div','muted','도구 권한 없음 · 부수효과는 항상 사람 승인 · 언제든 철회 가능'));
+  var row=el('div','btnrow'); row.style.marginTop='10px';
+  var ok=el('button','btn','동의하고 진단 시작'); ok.onclick=function(){ grantAndStart(need,scope); };
+  var no=el('button','btn ghost','취소'); no.onclick=function(){ chat.innerHTML=''; };
+  row.appendChild(ok); row.appendChild(no); card.appendChild(row);
+  chat.appendChild(card);
+}
+function grantAndStart(need,scope){
+  var chat=document.getElementById('chat');
+  var reqs=need.map(function(p){ return fetch('/policies/consent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:p,scope:scope})}).then(j).catch(function(){return {ok:false};}); });
+  Promise.all(reqs).then(function(results){
+    if(results.some(function(r){ return !r||!r.ok; })){ chat.innerHTML=''; chat.appendChild(el('div','bubble done','동의 저장 실패 — 다시 시도해주세요.')); return; }
+    diagnoseChat();
+  });
 }
 
 var currentES=null;
