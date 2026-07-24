@@ -88,6 +88,7 @@
   <div class="tabs">
     <button class="tab active" data-room="overview" onclick="showRoom('overview')">Overview</button>
     <button class="tab" data-room="diagnose" onclick="showRoom('diagnose')">Diagnose</button>
+    <button class="tab" data-room="council" onclick="showRoom('council')">Council</button>
     <button class="tab" data-room="benchmark" onclick="showRoom('benchmark')">Benchmark</button>
     <button class="tab" data-room="snapshot" onclick="showRoom('snapshot')">Snapshot</button>
     <button class="tab" data-room="ultra" onclick="showRoom('ultra')">Velox Ultra</button>
@@ -115,6 +116,25 @@
       <option value="drivers">드라이버 — 장치명과 버전까지 포함</option>
     </select>
     <div id="chat"></div>
+  </section>
+
+  <section class="room" id="room-council">
+    <h2>Council</h2>
+    <p class="rsub">Claude 제안 · GPT 검토 · APEX 결정론 Gate. 승인된 근거(Evidence)만 보고 판단하며 <b>아무 것도 실행하지 않습니다</b>(읽기 전용). 한 AI 실패를 다른 AI로 대체하지 않습니다.</p>
+    <label class="muted" style="font-size:13px">목표 (선택)</label>
+    <input id="council-objective" placeholder="예: 왜 느리고 뜨거운지 근거와 함께 진단해줘" style="width:100%;max-width:520px;margin:6px 0 12px;padding:10px 12px;border:.5px solid var(--line);border-radius:10px;background:transparent;color:var(--fg)"/>
+    <label class="muted" style="font-size:13px">이 AI에게 보낼 시스템 데이터</label>
+    <select id="council-scope" style="margin:6px 0 16px;max-width:360px">
+      <option value="minimal">최소 — 사용률·온도·전원 모드</option>
+      <option value="system">시스템 — CPU·RAM·OS·GPU 포함</option>
+      <option value="drivers">드라이버 — 장치명과 버전까지 포함</option>
+    </select>
+    <div class="btnrow">
+      <button class="btn" onclick="startCouncil()">Council 시작 · live</button>
+      <button class="btn ghost" id="council-cancel" style="display:none" onclick="cancelCouncil()">취소</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:8px">단계: Evidence → Claude 제안 → GPT 검토 → (필요 시) 수정 → APEX Safety Gate → 결정. 승인돼도 실행 버튼은 없습니다.</p>
+    <div id="council-chat"></div>
   </section>
 
   <section class="room" id="room-benchmark">
@@ -311,30 +331,60 @@ function startDiagnose(){
       return SCOPE_RANK[p.max_context_scope]<SCOPE_RANK[scope]; // 동의 범위가 부족
     });
     if(need.length===0){ diagnoseChat(); return; }
-    renderConsentGate(need,scope);
+    renderConsentGate(need,scope,chat,'진단',diagnoseChat);
   }).catch(function(){ diagnoseChat(); }); // status 실패해도 서버 게이트가 최종 방어
 }
-function renderConsentGate(need,scope){
-  var chat=document.getElementById('chat');
+// 공용 동의 게이트 — diagnose·council이 함께 쓴다.
+function needConsent(map,name,scope){ var p=map[name]; if(!p||!p.cloud_allowed) return true; return SCOPE_RANK[p.max_context_scope]<SCOPE_RANK[scope]; }
+function renderConsentGate(need,scope,chatEl,verb,startFn){
   var card=el('div','bubble sys');
   card.appendChild(el('div','who','동의 필요'));
   card.appendChild(el('div','','아래 AI에게 시스템 데이터를 보내려면 동의가 필요합니다: '+need.join(', ')));
   card.appendChild(el('div','muted','전송 범위 ['+scope+']: '+(SCOPE_DESC[scope]||scope)));
   card.appendChild(el('div','muted','도구 권한 없음 · 부수효과는 항상 사람 승인 · 언제든 철회 가능'));
   var row=el('div','btnrow'); row.style.marginTop='10px';
-  var ok=el('button','btn','동의하고 진단 시작'); ok.onclick=function(){ grantAndStart(need,scope); };
-  var no=el('button','btn ghost','취소'); no.onclick=function(){ chat.innerHTML=''; };
+  var ok=el('button','btn','동의하고 '+verb+' 시작'); ok.onclick=function(){ grantAndStart(need,scope,chatEl,startFn); };
+  var no=el('button','btn ghost','취소'); no.onclick=function(){ chatEl.innerHTML=''; };
   row.appendChild(ok); row.appendChild(no); card.appendChild(row);
-  chat.appendChild(card);
+  chatEl.appendChild(card);
 }
-function grantAndStart(need,scope){
-  var chat=document.getElementById('chat');
+function grantAndStart(need,scope,chatEl,startFn){
   var reqs=need.map(function(p){ return fetch('/policies/consent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:p,scope:scope})}).then(j).catch(function(){return {ok:false};}); });
   Promise.all(reqs).then(function(results){
-    if(results.some(function(r){ return !r||!r.ok; })){ chat.innerHTML=''; chat.appendChild(el('div','bubble done','동의 저장 실패 — 다시 시도해주세요.')); return; }
-    diagnoseChat();
+    if(results.some(function(r){ return !r||!r.ok; })){ chatEl.innerHTML=''; chatEl.appendChild(el('div','bubble done','동의 저장 실패 — 다시 시도해주세요.')); return; }
+    startFn();
   });
 }
+
+// --- Council ---
+var councilES=null;
+function startCouncil(){
+  var scope=val('council-scope')||'minimal';
+  var chat=document.getElementById('council-chat'); chat.innerHTML='';
+  fetch('/policies/status').then(j).then(function(res){
+    var map={}; (res.providers||[]).forEach(function(p){ map[p.provider]=p; });
+    var need=DIAG_PROVIDERS.filter(function(name){ return needConsent(map,name,scope); });
+    if(need.length===0){ councilRun(scope); return; }
+    renderConsentGate(need,scope,chat,'Council',function(){ councilRun(scope); });
+  }).catch(function(){ councilRun(scope); });
+}
+function councilRun(scope){
+  var chat=document.getElementById('council-chat'); chat.innerHTML='';
+  var cancel=document.getElementById('council-cancel'); cancel.style.display='inline-flex';
+  var thinking=null, rm=function(){ if(thinking){thinking.remove();thinking=null;} };
+  var fin=function(){ cancel.style.display='none'; rm(); councilES=null; };
+  var add=function(who,text,cls){ var b=el('div','bubble '+cls); b.appendChild(el('div','who',who)); var body=el('div',''); body.style.whiteSpace='pre-wrap'; body.textContent=text; b.appendChild(body); chat.appendChild(b); b.scrollIntoView({block:'nearest'}); };
+  var think=function(label){ rm(); thinking=el('div','bubble ai'); thinking.appendChild(el('div','who',label)); thinking.appendChild(el('div','dots','● ● ●')); chat.appendChild(thinking); thinking.scrollIntoView({block:'nearest'}); };
+  add('Council 시작','Evidence 수집 → Claude 제안 → GPT 검토 → APEX Gate','sys'); think('Evidence 준비 중');
+  var obj=val('council-objective');
+  var es=new EventSource('/council/stream?scope='+encodeURIComponent(scope)+'&objective='+encodeURIComponent(obj)); councilES=es;
+  es.onmessage=function(e){ var m; try{m=JSON.parse(e.data);}catch(_){return;} rm();
+    if(m.who==='done'){ add('결정',m.text,'done'); es.close(); fin(); return; }
+    var sys=(m.who.indexOf('Gate')>=0)||(m.who.indexOf('Evidence')>=0)||(m.who==='오류');
+    add(m.who,m.text,sys?'sys':'ai'); think('다음 단계 준비 중'); };
+  es.onerror=function(){ rm(); add('오류','스트림 연결 실패.','done'); es.close(); fin(); };
+}
+function cancelCouncil(){ if(councilES)councilES.close(); document.getElementById('council-chat').appendChild(el('div','bubble done','취소됨 — 남은 단계를 중단했습니다.')); document.getElementById('council-cancel').style.display='none'; councilES=null; }
 
 var currentES=null;
 function diagnoseChat(){

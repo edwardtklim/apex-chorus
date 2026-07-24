@@ -16,7 +16,9 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
-use tokio_stream::wrappers::ReceiverStream;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use velox_core::snapshot::Snapshot;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -51,6 +53,7 @@ async fn main() {
         .route("/policies/:provider", delete(policies_revoke))
         .route("/run/:cmd", get(run_cmd))
         .route("/diagnose/stream", get(diagnose_stream))
+        .route("/council/stream", get(council_stream))
         .route("/version", get(version))
         .route("/profile", get(get_profile).post(save_profile))
         .route("/snapshot/save", post(save_baseline))
@@ -357,6 +360,129 @@ async fn diagnose_stream(
         ));
     });
     Sse::new(ReceiverStream::new(rx))
+}
+
+#[derive(Deserialize, Default)]
+struct CouncilQuery {
+    #[serde(default)]
+    scope: velox_core::privacy::ContextScope,
+    #[serde(default)]
+    objective: String,
+}
+
+/// 한 CouncilEvent를 (말풍선 제목, 본문)으로. Provider/model을 함께 표시(불변조건: 어떤 provider인지).
+fn council_label(e: &velox_core::council::CouncilEvent) -> (String, String) {
+    use velox_core::council::CouncilEvent as E;
+    let m = velox_core::ai::model_name;
+    match e {
+        E::Evidence { scope, items } => (
+            "시스템 Evidence".into(),
+            format!("{items} 항목 (scope={scope:?}) — 승인된 데이터만 전송"),
+        ),
+        E::Proposed { summary, findings } => (
+            format!("Proposer · Claude ({})", m("claude")),
+            format!("{summary} · finding {findings}개"),
+        ),
+        E::Reviewed { verdict, reasons } => (
+            format!("Reviewer · GPT ({})", m("gpt")),
+            if reasons.is_empty() {
+                verdict.clone()
+            } else {
+                format!("{verdict} — {}", reasons.join("; "))
+            },
+        ),
+        E::Revised { summary, findings } => (
+            format!("Reviser · Claude ({})", m("claude")),
+            format!("{summary} · finding {findings}개"),
+        ),
+        E::Gated { passed, reasons } => (
+            "APEX Safety Gate".into(),
+            if *passed {
+                "통과 ✓".into()
+            } else {
+                format!("불통과: {}", reasons.join("; "))
+            },
+        ),
+    }
+}
+
+/// 최종 CouncilDecision을 사람용 텍스트로.
+fn council_decision_text(d: &velox_core::council::CouncilDecision) -> String {
+    use velox_core::council::CouncilStatus as S;
+    let head = match d.status {
+        S::Approved => "승인 ✓",
+        S::Rejected => "반려 ✗",
+        S::Inconclusive => "결론 없음",
+        S::Cancelled => "취소됨",
+    };
+    let mut s = format!("결정: {head}");
+    if let Some(p) = &d.proposal {
+        s.push_str(&format!("\n요약: {}", p.summary));
+        for f in &p.findings {
+            let cites: Vec<String> = f.evidence.iter().map(|id| id.0.clone()).collect();
+            s.push_str(&format!("\n• {} [근거: {}]", f.statement, cites.join(", ")));
+        }
+    }
+    if !d.reviewer_reasons.is_empty() {
+        s.push_str(&format!("\n사유: {}", d.reviewer_reasons.join("; ")));
+    }
+    if d.requires_human_confirmation {
+        s.push_str("\n⚠ 실행 전 사람 승인 필요");
+    }
+    s
+}
+
+/// Council 실시간 스트림. Server는 SSE 변환·취소만 하고, 판단은 velox-core::council이 한다.
+async fn council_stream(
+    Query(q): Query<CouncilQuery>,
+) -> Sse<UnboundedReceiverStream<Result<Event, Infallible>>> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Event, Infallible>>();
+    tokio::spawn(async move {
+        fn ev(who: &str, text: &str) -> Result<Event, Infallible> {
+            Ok(Event::default()
+                .json_data(serde_json::json!({ "who": who, "text": text }))
+                .unwrap_or_else(|_| Event::default().data("")))
+        }
+        let scope = q.scope;
+        let objective = if q.objective.trim().is_empty() {
+            "이 시스템의 상태를 진단하고 개선점을 근거와 함께 제시하라".to_string()
+        } else {
+            q.objective.clone()
+        };
+
+        // Evidence: 결정론적 HealthReport에서 승인 범위로 최소화해 생성(임의 prompt 금지).
+        let snap = tokio::task::spawn_blocking(Snapshot::collect)
+            .await
+            .unwrap_or_default();
+        let health = velox_core::health::HealthReport::from_snapshot(snap);
+        let bundle = match velox_core::evidence::EvidenceBundle::from_health_report(&health, scope)
+        {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = tx.send(ev("오류", &format!("Evidence 생성 실패: {e}")));
+                return;
+            }
+        };
+
+        let req = velox_core::council::CouncilRequest {
+            objective,
+            evidence: bundle,
+            approved_scope: scope,
+        };
+        // 클라이언트가 닫으면 send 실패 → cancel 세팅 → Council이 다음 단계에서 멈춘다.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_cb = cancel.clone();
+        let tx_cb = tx.clone();
+        let on_event = move |e: &velox_core::council::CouncilEvent| {
+            let (who, text) = council_label(e);
+            if tx_cb.send(ev(&who, &text)).is_err() {
+                cancel_cb.store(true, Ordering::Relaxed);
+            }
+        };
+        let decision = velox_core::council::run(req, &cancel, &on_event).await;
+        let _ = tx.send(ev("done", &council_decision_text(&decision)));
+    });
+    Sse::new(UnboundedReceiverStream::new(rx))
 }
 
 /// velox CLI 실행 파일 경로 (같은 폴더의 velox.exe 우선, 없으면 PATH의 velox).
