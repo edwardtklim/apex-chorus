@@ -294,19 +294,28 @@ async fn diagnose_stream(
             };
         }
 
-        let snap = tokio::task::spawn_blocking(Snapshot::collect).await.ok();
-        let context = snap
-            .as_ref()
-            .map(|s| velox_core::privacy::AiContext::from_snapshot(s, options.scope));
-        let state = context
-            .as_ref()
-            .map(|c| c.to_prompt_json())
-            .unwrap_or_else(|| "{}".into());
+        // AI로 나가는 payload는 오직 typed EvidenceBundle에서 생성한다(승인 범위로 최소화).
+        let snap = tokio::task::spawn_blocking(Snapshot::collect)
+            .await
+            .unwrap_or_default();
+        let health = velox_core::health::HealthReport::from_snapshot(snap);
+        let bundle = match velox_core::evidence::EvidenceBundle::from_health_report(
+            &health,
+            options.scope,
+        ) {
+            Ok(b) => b,
+            Err(e) => {
+                push!(ev("오류", &format!("Evidence 생성 실패: {e}")));
+                return;
+            }
+        };
+        let state = bundle.to_prompt();
         push!(ev(
             "시스템",
             &format!(
-                "AI 전송 범위: {:?}\n전송 전 미리보기: {state}",
-                options.scope
+                "AI 전송 범위: {:?} · {} 항목\n전송 전 미리보기:\n{state}",
+                options.scope,
+                bundle.items.len()
             )
         ));
 

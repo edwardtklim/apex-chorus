@@ -134,15 +134,57 @@ fn extract_json(s: &str) -> Option<&str> {
 
 // ---------------- [2] 3단계 AI 파이프라인 ----------------
 
+/// diagnose가 AI에 보낼 Evidence — Minimal(전원·CPU·온도)만. simulate_hot로 주입된 온도도 반영.
+fn diagnose_evidence(snap: &Snapshot) -> Option<velox_core::evidence::EvidenceBundle> {
+    use velox_core::evidence::{EvidenceData, EvidenceId, EvidenceItem, EvidenceSource};
+    use velox_core::privacy::ContextScope::Minimal;
+    let mut items = vec![
+        EvidenceItem {
+            id: EvidenceId("diag.power_plan".into()),
+            source: EvidenceSource::Snapshot,
+            sensitivity: Minimal,
+            data: EvidenceData::Fact {
+                name: "전원 계획".into(),
+                value: snap.plan_label.clone(),
+            },
+        },
+        EvidenceItem {
+            id: EvidenceId("diag.cpu_usage".into()),
+            source: EvidenceSource::Snapshot,
+            sensitivity: Minimal,
+            data: EvidenceData::Metric {
+                name: "CPU 사용률".into(),
+                value: snap.cpu_usage as f64,
+                unit: "%".into(),
+            },
+        },
+    ];
+    if let Some(t) = snap.max_temp_c {
+        items.push(EvidenceItem {
+            id: EvidenceId("diag.max_temp_c".into()),
+            source: EvidenceSource::Snapshot,
+            sensitivity: Minimal,
+            data: EvidenceData::Metric {
+                name: "최고 온도".into(),
+                value: t as f64,
+                unit: "°C".into(),
+            },
+        });
+    }
+    velox_core::evidence::EvidenceBundle::new(Minimal, items).ok()
+}
+
 async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
+    // AI로 나가는 payload는 typed EvidenceBundle에서만 생성한다(Minimal: 전원·CPU·온도).
+    let evidence = diagnose_evidence(snap)?.to_prompt();
+
     // 1) Customer (Claude) — 의도/상황 이해 (정책 게이트 경유)
     let intent = crate::chorus::gated_text(
         "claude",
         velox_core::policy::AgentPurpose::Diagnose,
-        velox_core::privacy::ContextScope::System,
+        velox_core::privacy::ContextScope::Minimal,
         format!(
-            "다음 시스템 상태에서 사용자가 가장 걱정할 점이나 원하는 바를 한국어 한 줄로 요약:\n{}",
-            snap.summary
+            "다음 시스템 상태에서 사용자가 가장 걱정할 점이나 원하는 바를 한국어 한 줄로 요약:\n{evidence}"
         ),
     )
     .await
@@ -159,12 +201,12 @@ async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
          정확한 예시: {{\"action\":\"set_power_plan\",\"target\":\"balanced\",\"reason\":\"발열이 높아 균형 모드로 낮춤\"}}\n\
          규칙: 안전하고 되돌릴 수 있는 경우에만 set_power_plan, 애매하면 action을 \"none\"으로.",
         intent.trim(),
-        snap.summary
+        evidence
     );
     let eng_raw = crate::chorus::gated_text(
         "gpt",
         velox_core::policy::AgentPurpose::Propose,
-        velox_core::privacy::ContextScope::System,
+        velox_core::privacy::ContextScope::Minimal,
         eng_prompt,
     )
     .await?;
@@ -178,12 +220,12 @@ async fn ai_pipeline(snap: &Snapshot) -> Option<Pipeline> {
             let conf_prompt = format!(
                 "너는 검수 AI다. 제안된 조치: 전원 모드를 '{}'(으)로 변경.\n시스템 상태:\n{}\n\n\
                  안전하고 합리적이면 'APPROVE', 아니면 'REJECT'로 시작해 한국어 한 줄 이유.",
-                label, snap.summary
+                label, evidence
             );
             let r = crate::chorus::gated_text(
                 "gemini",
                 velox_core::policy::AgentPurpose::Review,
-                velox_core::privacy::ContextScope::System,
+                velox_core::privacy::ContextScope::Minimal,
                 conf_prompt,
             )
             .await
