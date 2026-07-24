@@ -159,9 +159,16 @@ pub async fn run_analyze() {
          ※ 보수적으로 판단할 것. 불필요한 업데이트를 권하지 말 것. 조언만 하며 시스템을 바꾸지 않는다.\n\n[정보]\n{}",
         summary
     );
-    match velox_core::ai::query_text_with("claude", &prompt).await {
+    match crate::chorus::gated_text(
+        "claude",
+        velox_core::policy::AgentPurpose::Diagnose,
+        velox_core::privacy::ContextScope::Drivers,
+        prompt,
+    )
+    .await
+    {
         Some(t) => println!("{}", t.trim()),
-        None => println!("(AI 호출 실패 — API 키 확인)"),
+        None => println!("(AI 드라이버 진단 생략 — 위 이유 참고. 스캔 결과는 위에 표시됨.)"),
     }
 }
 

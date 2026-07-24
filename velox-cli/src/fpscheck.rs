@@ -146,8 +146,15 @@ pub async fn run(seconds: u64) {
          ※ 조언만 한다. 시스템을 직접 바꾸지 않는다."
     );
     println!("\n[AI 게임 성능 진단 — 조언만]");
-    match velox_core::ai::query_text_with("claude", &prompt).await {
+    match crate::chorus::gated_text(
+        "claude",
+        velox_core::policy::AgentPurpose::Diagnose,
+        velox_core::privacy::ContextScope::System,
+        prompt,
+    )
+    .await
+    {
         Some(t) => println!("{}", t.trim()),
-        None => println!("(AI 호출 실패 — API 키 확인)"),
+        None => println!("(AI 게임 성능 진단 생략 — 위 이유 참고. 측정값은 위에 표시됨.)"),
     }
 }

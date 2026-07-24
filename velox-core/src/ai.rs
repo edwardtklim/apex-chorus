@@ -235,7 +235,8 @@ pub fn route_model(prompt: &str) -> &'static str {
 }
 
 /// 의미기반 라우팅 — 라우터 모델이 요청 의도를 보고 최적 모델을 고른다.
-/// 실패하면 키워드 라우팅(route_model)으로 폴백.
+/// **동의된(정책 게이트를 통과하는) 라우터만** 사용하고, 못 쓰면 네트워크 없는
+/// 키워드 라우팅(route_model)으로 폴백한다.
 pub async fn route_semantic(prompt: &str) -> String {
     let router_prompt = format!(
         "You are a routing classifier. Pick the single best AI model for the user's request.\n\
@@ -248,10 +249,15 @@ pub async fn route_semantic(prompt: &str) -> String {
         prompt
     );
     for router in ["gpt", "claude"] {
-        if has_key(router)
-            && let Some(resp) = query_text_with(router, &router_prompt).await
-        {
-            let pick = resp.to_lowercase();
+        let req = crate::policy::AgentRequest {
+            provider: router.to_string(),
+            purpose: crate::policy::AgentPurpose::Other,
+            prompt: router_prompt.clone(),
+            scope: crate::privacy::ContextScope::Minimal,
+            requested_tools: std::collections::BTreeSet::new(),
+        };
+        if let Ok(resp) = crate::policy::execute_agent(req).await {
+            let pick = resp.text.to_lowercase();
             for m in ["claude", "gpt", "gemini", "grok"] {
                 if pick.contains(m) {
                     return m.to_string();
@@ -264,11 +270,11 @@ pub async fn route_semantic(prompt: &str) -> String {
 
 /// 특정 provider 호출, 텍스트 반환.
 ///
-/// **Deprecated (v0.15):** 새 제품 경로에서 직접 호출하지 말 것.
-/// 정책 게이트를 거치는 [`crate::policy::execute_agent`]를 사용하라 — 그래야 provider 위치·
-/// 클라우드 동의·데이터 범위·툴 권한이 강제된다. 이 함수는 게이트웨이의 내부 실행 단계와
-/// 아직 이전되지 않은 보조 경로(chorus bench/consensus/test)에서만 남겨둔다.
-pub async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
+/// **내부 전용 (v0.15 Step C.6):** 정책 게이트 [`crate::policy::execute_agent`]의 실행
+/// 단계에서만 호출된다. 가시성을 `pub(crate)`로 잠가 crate 밖(제품 경로)에서 직접 호출을
+/// **컴파일 단계에서 차단**한다 — 모든 클라우드 호출은 provider 위치·동의·범위·툴 권한을
+/// 강제하는 게이트를 반드시 거친다.
+pub(crate) async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
     let client = http_client();
     let models = load_models();
     match model {

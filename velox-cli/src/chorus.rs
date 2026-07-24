@@ -1,6 +1,6 @@
 use velox_core::ai::{
     MODELS_FILE, PROVIDERS_FILE, ProviderConfig, env_var_for, has_key, load_providers, model_name,
-    query_text_with, save_providers,
+    save_providers,
 };
 use velox_core::policy::{AgentPurpose, AgentRequest, PolicyError, execute_agent};
 use velox_core::privacy::ContextScope;
@@ -72,6 +72,24 @@ pub async fn gated_text(
             None
         }
     }
+}
+
+/// `gated_text`의 조용한 버전 — 거부/실패 모두 `None` (루프에서 미승인 provider 자동 skip용).
+/// 화면 출력 없이 정책 게이트만 통과시킨다.
+pub async fn gated_text_quiet(
+    provider: &str,
+    purpose: AgentPurpose,
+    scope: ContextScope,
+    prompt: String,
+) -> Option<String> {
+    let req = AgentRequest {
+        provider: provider.to_string(),
+        purpose,
+        prompt,
+        scope,
+        requested_tools: std::collections::BTreeSet::new(),
+    };
+    execute_agent(req).await.ok().map(|r| r.text)
 }
 
 fn scope_label(scope: ContextScope) -> &'static str {
@@ -203,36 +221,37 @@ pub fn set_key(provider: &str, key: &str) {
 
 /// 연결된 모든 AI에 실제로 핑을 보내 응답 여부를 검증. `velox chorus test`
 pub async fn test_all() {
-    println!("=== APEX Chorus — 연결 테스트 ===\n");
+    println!("=== APEX Chorus — 연결 테스트 (정책 게이트 경유) ===\n");
     for p in ["claude", "gpt", "gemini", "grok"] {
-        let var = env_var_for(p).unwrap();
-        if !has_key(p) {
-            println!(
-                "✗ {:8} 키 없음 ({}) — `velox chorus set {} <key>`",
-                p, var, p
-            );
-            continue;
-        }
-        let t = std::time::Instant::now();
-        let ok = query_text_with(p, "Reply with exactly: OK").await.is_some();
-        let ms = t.elapsed().as_millis();
-        if ok {
-            println!("✓ {:8} 응답 정상 ({}ms)", p, ms);
-        } else {
-            println!("✗ {:8} 응답 실패 — 키/네트워크 확인", p);
-        }
+        report_ping(p, "").await;
     }
     for p in load_providers() {
-        let t = std::time::Instant::now();
-        let ok = query_text_with(&p.name, "Reply with exactly: OK")
-            .await
-            .is_some();
-        let ms = t.elapsed().as_millis();
-        if ok {
-            println!("✓ {:8} (커스텀) 응답 정상 ({}ms)", p.name, ms);
-        } else {
-            println!("✗ {:8} (커스텀) 응답 실패 — URL/모델/키 확인", p.name);
+        report_ping(&p.name, " (커스텀)").await;
+    }
+}
+
+/// 한 provider에 정책 게이트를 통해 핑을 보내고 결과를 사람용으로 출력.
+async fn report_ping(provider: &str, tag: &str) {
+    let req = AgentRequest {
+        provider: provider.to_string(),
+        purpose: AgentPurpose::Other,
+        prompt: "Reply with exactly: OK".to_string(),
+        scope: ContextScope::Minimal,
+        requested_tools: std::collections::BTreeSet::new(),
+    };
+    let t = std::time::Instant::now();
+    match execute_agent(req).await {
+        Ok(_) => println!(
+            "✓ {provider:8}{tag} 응답 정상 ({}ms)",
+            t.elapsed().as_millis()
+        ),
+        Err(PolicyError::CloudNotAllowed(_)) => {
+            println!("• {provider:8}{tag} 미동의 — `velox chorus consent {provider}`")
         }
+        Err(PolicyError::ProviderCallFailed(_)) => {
+            println!("✗ {provider:8}{tag} 응답 실패 — 키/네트워크/모델 확인")
+        }
+        Err(e) => println!("✗ {provider:8}{tag} {e}"),
     }
 }
 
@@ -354,7 +373,13 @@ pub async fn bench(hard: bool) {
         let (mut lat, mut len) = (0u128, 0usize);
         for (cat, q) in &prompts {
             let t = std::time::Instant::now();
-            let answer = query_text_with(model, q).await;
+            let answer = gated_text_quiet(
+                model,
+                AgentPurpose::Other,
+                ContextScope::Minimal,
+                q.to_string(),
+            )
+            .await;
             lat += t.elapsed().as_millis();
             let answer = match answer {
                 Some(a) => a,
@@ -374,7 +399,11 @@ pub async fn bench(hard: bool) {
             let mut sum = 0.0;
             let mut cnt = 0u32;
             for j in panel.iter().filter(|j| j.as_str() != model.as_str()) {
-                if let Some(sc) = query_text_with(j, &jp).await.and_then(|s| parse_score(&s)) {
+                if let Some(sc) =
+                    gated_text_quiet(j, AgentPurpose::Review, ContextScope::Minimal, jp.clone())
+                        .await
+                        .and_then(|s| parse_score(&s))
+                {
                     sum += sc;
                     cnt += 1;
                 }
@@ -461,7 +490,14 @@ pub async fn consensus(question: &str) {
     for model in &models {
         print!("[{}] 응답 중...", model);
         std::io::Write::flush(&mut std::io::stdout()).ok();
-        match query_text_with(model, question).await {
+        match gated_text_quiet(
+            model,
+            AgentPurpose::Consensus,
+            ContextScope::Minimal,
+            question.to_string(),
+        )
+        .await
+        {
             Some(a) => {
                 println!(" ✓");
                 answers.push((model.clone(), a));
@@ -499,7 +535,14 @@ pub async fn consensus(question: &str) {
         answers[0].0.clone()
     };
     println!("\n--- 종합 (by {}) ---", synthesizer);
-    match query_text_with(&synthesizer, &synth_prompt).await {
+    match gated_text_quiet(
+        &synthesizer,
+        AgentPurpose::Consensus,
+        ContextScope::Minimal,
+        synth_prompt,
+    )
+    .await
+    {
         Some(s) => println!("{}", s.trim()),
         None => println!("(종합 실패)"),
     }
