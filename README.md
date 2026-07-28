@@ -130,7 +130,11 @@ Claude / GPT / Gemini / Grok APIs · `clap` · `tokio` · `reqwest`
 
 ---
 
-## Status (v0.15.0 — alpha)
+## Status (v0.16.0 — alpha)
+
+**Local Management Hub (v0.16):** Settings hosts a per-provider hub to manage API keys
+(add / status / delete), cloud consent + data scope, and model IDs — all wired to the local
+core APIs, keys staying in the Windows Credential Manager. No accounts or sync.
 
 **Policy-enforced multi-AI foundation.** Every cloud-AI call in a product path goes through
 one gateway (`execute_agent`) that enforces a per-provider **Agent Policy**: cloud calls are
@@ -183,6 +187,10 @@ Detailed engineering handoff and version gates: [CLAUDE_HANDOFF.md](CLAUDE_HANDO
   (deny-by-default), cloud **consent** (CLI + in-app), typed **Evidence** engine, and a
   read-only **Council** (Claude → GPT → deterministic gate) surfaced in Pulse. All product
   AI payloads come from Evidence only. *(Real repair-workflow field test moves to v0.20.)*
+- **v0.16 — Local Management Hub ✅:** one place in Settings to manage per-provider API keys
+  (add / status / delete), cloud **consent** + data scope, and **model** IDs — wired to the
+  local core APIs. Keys stay in the Windows Credential Manager. No accounts, sync, or session
+  history (those are v0.18 / v2.0).
 - **v1.0 — Stable release:** config file, installer, docs, **code signing** (so Smart App
   Control users can run it), polished UX. First public CLI.
 - **Beyond:** provider adapters for GPT/Claude/Ollama-compatible desktop models, consented

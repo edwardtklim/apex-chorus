@@ -216,6 +216,21 @@ git status --short
 
 # Version Roadmap
 
+> **Roadmap revision (2026-07-24, per GPT):** v0.16 is reassigned to the **Local Management
+> Hub** — shipped: a per-provider key / consent / model management UI wired to the local core
+> APIs, with no accounts, sync, or session history. The **AI Development Workspace** and
+> **Safe Project Actions** sections below (originally v0.16 / v0.17) are **reslotted to later
+> versions** — exact numbering pending GPT. A **Local Session Store** is planned for **v0.18**;
+> **accounts / multi-device sync** for **v2.0** (API keys are never synced — each device uses
+> its own OS credential store).
+
+## v0.16.0 — Local Management Hub (shipped)
+
+One place to manage, per provider: **API keys** (add / status / delete), **cloud consent** +
+data scope + revoke, and **model IDs** (select / reset). Keys stay in the Windows Credential
+Manager; values are never shown. Destructive actions (key delete, consent revoke) require an
+explicit confirm. **Excluded:** session history, account server, multi-device sync, API-key sync.
+
 ## v0.15.0 — Policy-Enforced Multi-AI Foundation
 
 ### 목표
@@ -506,7 +521,7 @@ Final Decision
 
 ---
 
-## v0.16.0 — AI Development Workspace
+## (reslotted, was v0.16) AI Development Workspace
 
 ### 목표
 
