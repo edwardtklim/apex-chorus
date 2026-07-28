@@ -48,9 +48,12 @@ async fn main() {
         .route("/report/benchmark", post(cpu_benchmark))
         .route("/keys", post(save_keys))
         .route("/keys/status", get(keys_status))
+        .route("/keys/:provider", delete(delete_key))
         .route("/policies/status", get(policies_status))
         .route("/policies/consent", post(policies_consent))
         .route("/policies/:provider", delete(policies_revoke))
+        .route("/models", get(models_status).post(models_set))
+        .route("/models/:provider", delete(models_reset))
         .route("/run/:cmd", get(run_cmd))
         .route("/diagnose/stream", get(diagnose_stream))
         .route("/council/stream", get(council_stream))
@@ -265,6 +268,46 @@ async fn policies_consent(Json(req): Json<ConsentReq>) -> Json<serde_json::Value
 async fn policies_revoke(Path(provider): Path<String>) -> Json<serde_json::Value> {
     let ok = velox_core::policy::revoke_consent(&provider);
     Json(serde_json::json!({ "ok": ok }))
+}
+
+/// provider의 API 키를 OS 자격증명 저장소에서 삭제 (값은 절대 다루지 않음).
+async fn delete_key(Path(provider): Path<String>) -> Json<serde_json::Value> {
+    match velox_core::credentials::delete(&provider) {
+        Ok(()) => Json(serde_json::json!({ "ok": true })),
+        Err(error) => Json(serde_json::json!({ "ok": false, "error": error })),
+    }
+}
+
+/// 내장 provider별 현재 모델 ID.
+async fn models_status() -> Json<serde_json::Value> {
+    let providers: Vec<serde_json::Value> = BUILTIN_PROVIDERS
+        .iter()
+        .map(|p| serde_json::json!({ "provider": p, "model": velox_core::ai::model_name(p) }))
+        .collect();
+    Json(serde_json::json!({ "providers": providers }))
+}
+
+/// 모델 설정 요청 (사용자의 명시적 저장으로만 호출).
+#[derive(Deserialize)]
+struct ModelSetReq {
+    provider: String,
+    model: String,
+}
+
+/// provider의 모델 ID 설정 — set_model이 검증(빈/제어문자/길이)을 강제한다.
+async fn models_set(Json(req): Json<ModelSetReq>) -> Json<serde_json::Value> {
+    match velox_core::ai::set_model(&req.provider, &req.model) {
+        Ok(model) => Json(serde_json::json!({ "ok": true, "model": model })),
+        Err(error) => Json(serde_json::json!({ "ok": false, "error": error })),
+    }
+}
+
+/// provider의 모델을 기본값으로 초기화.
+async fn models_reset(Path(provider): Path<String>) -> Json<serde_json::Value> {
+    match velox_core::ai::reset_model(&provider) {
+        Ok(model) => Json(serde_json::json!({ "ok": true, "model": model })),
+        Err(error) => Json(serde_json::json!({ "ok": false, "error": error })),
+    }
 }
 
 #[derive(Deserialize, Default)]
