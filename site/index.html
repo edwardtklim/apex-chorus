@@ -104,6 +104,7 @@
     <button class="tab" data-room="council" onclick="showRoom('council')">Council</button>
     <button class="tab" data-room="benchmark" onclick="showRoom('benchmark')">Benchmark</button>
     <button class="tab" data-room="snapshot" onclick="showRoom('snapshot')">Snapshot</button>
+    <button class="tab" data-room="project" onclick="showRoom('project')">Project</button>
     <button class="tab" data-room="ultra" onclick="showRoom('ultra')">Velox Ultra</button>
     <button class="tab" data-room="settings" onclick="showRoom('settings')">Settings</button>
   </div>
@@ -169,6 +170,19 @@
     </div>
     <div id="snap-status" class="muted" style="font-size:13px;margin-bottom:16px;min-height:18px"></div>
     <div id="snap-diff"></div>
+  </section>
+
+  <section class="room" id="room-project">
+    <h2>Project</h2>
+    <p class="rsub">코드를 실행하거나 수정하지 않고 프로젝트 구조, 언어, TODO와 빌드 명령 후보를 로컬에서 확인합니다.</p>
+    <label class="muted" for="project-path" style="font-size:13px">이 PC의 프로젝트 폴더</label>
+    <div class="btnrow" style="align-items:stretch">
+      <input id="project-path" placeholder="예: C:\Users\name\source\my-project" style="flex:1;min-width:280px;padding:10px 12px;border:.5px solid var(--line);border-radius:10px;background:transparent;color:var(--fg)">
+      <button class="btn" id="project-scan-button" onclick="scanProject()">읽기 전용 스캔</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin:8px 0 18px">절대경로와 비밀 파일은 결과에서 제외됩니다 · 명령 실행 없음 · 파일 변경 없음 · 클라우드 전송 없음</p>
+    <div id="project-status" class="muted" style="font-size:13px;min-height:18px"></div>
+    <div class="grid" id="project-result"></div>
   </section>
 
   <section class="room" id="room-ultra">
@@ -326,6 +340,37 @@ function compareBaseline(){ var st=document.getElementById('snap-status'), out=d
     (d.removed||[]).forEach(function(x){ h+='<div class="r"><span>삭제</span><b>- '+esc(x)+'</b></div>'; });
     out.innerHTML='<div class="card">'+h+'</div>';
   }).catch(function(){ st.textContent='비교 실패.'; });
+}
+
+function scanProject(){
+  var path=(val('project-path')||'').trim();
+  var status=document.getElementById('project-status');
+  var result=document.getElementById('project-result');
+  var button=document.getElementById('project-scan-button');
+  if(!path){ status.textContent='먼저 프로젝트 폴더 경로를 입력하세요.'; return; }
+  status.textContent='프로젝트를 읽는 중…';
+  result.innerHTML='';
+  button.disabled=true;
+  postJSON('/project/scan',{path:path}).then(function(r){
+    button.disabled=false;
+    if(r.ok===false&&!r.error){ status.textContent='스캔 실패. 앱 연결 상태를 확인하세요.'; return; }
+    if(r.error){ status.textContent=r.error.message||'스캔 실패.'; return; }
+    var s=r.scan||{}, safety=r.safety||{};
+    status.textContent='완료 · '+(s.files||[]).length+'개 파일 · '+(s.total_bytes||0).toLocaleString()+' bytes';
+    var languages=Object.keys(s.language_counts||{}).sort(function(a,b){return s.language_counts[b]-s.language_counts[a];})
+      .map(function(name){return row(esc(name),s.language_counts[name]);}).join('')||'<span class="muted">감지된 언어 없음</span>';
+    var manifests=(s.manifests||[]).map(function(x){return '<div class="r"><span>'+esc(x)+'</span></div>';}).join('')||'<span class="muted">없음</span>';
+    var commands=(s.detected_commands||[]).map(function(x){return '<div class="r"><span>'+esc(x)+'</span><b>실행 안 함</b></div>';}).join('')||'<span class="muted">없음</span>';
+    var todos=(s.todos||[]).slice(0,12).map(function(x){return '<div class="r"><span>'+esc(x.rel_path)+':'+x.line+'</span><b>'+esc(x.text)+'</b></div>';}).join('')||'<span class="muted">없음</span>';
+    var safe=(safety.read_only&&!safety.cloud_sent&&!safety.writes_performed&&!safety.commands_executed);
+    result.innerHTML=
+      card('Languages',languages)+card('Manifests',manifests)+
+      card('Detected commands',commands)+card('TODO / FIXME',todos)+
+      card('Safety',row('Read only',safe?'확인됨':'확인 필요')+row('Secret files excluded',s.skipped_secret_files||0)+row('Limit reached',s.truncated?'예':'아니요'));
+  }).catch(function(){
+    button.disabled=false;
+    status.textContent='스캔 실패. 경로와 앱 연결 상태를 확인하세요.';
+  });
 }
 
 // --- Consent gate: diagnose 전에 미동의 Provider를 앱에서 직접 동의받는다 (CLI 불필요) ---
