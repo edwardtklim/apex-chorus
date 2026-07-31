@@ -216,13 +216,34 @@ git status --short
 
 # Version Roadmap
 
-> **Roadmap revision (2026-07-24, per GPT):** v0.16 is reassigned to the **Local Management
-> Hub** — shipped: a per-provider key / consent / model management UI wired to the local core
-> APIs, with no accounts, sync, or session history. The **AI Development Workspace** and
-> **Safe Project Actions** sections below (originally v0.16 / v0.17) are **reslotted to later
-> versions** — exact numbering pending GPT. A **Local Session Store** is planned for **v0.18**;
-> **accounts / multi-device sync** for **v2.0** (API keys are never synced — each device uses
-> its own OS credential store).
+> **Roadmap revision (2026-07-31):** v0.16 shipped the **Local Management Hub**, v0.17 shipped
+> the metadata-only **Local Usage Ledger**, and v0.18 is the **Read-only Project Intelligence**
+> release candidate. Safe Project Actions remain deferred; v0.18 never executes project
+> commands or writes project files. **Accounts / multi-device sync** remain v2.0, and API keys
+> are never synced — each device uses its own OS credential store.
+
+## v0.18.0 — Read-only Project Intelligence (release candidate)
+
+- Bounded `ProjectSession` scanning with symlink/junction escape prevention
+- Secret filename filtering, token redaction, and relative-path-only Evidence
+- Typed Project Evidence connected to the read-only Council
+- CLI `project scan` / `project analyze`
+- Authenticated local `POST /project/scan`
+- Pulse Project room with explicit no-write/no-execute/no-cloud safety state
+- CLI smoke test and authenticated API contract test in CI
+
+**Not included:** automatic build/test execution, project writes, patch application, or hidden
+cloud upload. Compiler/test output may be accepted later only as user-supplied Evidence or via
+an explicitly approved, sandboxed job design.
+
+## v0.17.0 — Local Usage Ledger (shipped in main)
+
+- Metadata-only provider/model/token/session records stored locally
+- No prompts, responses, API keys, or evidence content in the ledger
+- User-supplied dated pricing; missing/stale data is `unknown`, never fabricated
+- Provider token normalization and cached-token accounting
+- Cross-process writer lock, unique IDs, and corrupt-ledger quarantine
+- CLI, authenticated local API, and Settings usage surface
 
 ## v0.16.0 — Local Management Hub (shipped)
 
@@ -1061,4 +1082,3 @@ Claude는 아래 순서만 따른다.
 ```
 
 지금은 v0.16 Project Intelligence, 파일 쓰기, Plugin SDK를 시작하지 않는다.
-

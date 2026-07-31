@@ -130,7 +130,17 @@ Claude / GPT / Gemini / Grok APIs · `clap` · `tokio` · `reqwest`
 
 ---
 
-## Status (v0.16.0 — alpha)
+## Status (v0.18.0 RC — alpha)
+
+**Read-only Project Intelligence (v0.18):** `velox project scan` and the Pulse Project room
+inspect a selected local project without running commands or changing files. Secret files,
+absolute paths, symlink escapes, and oversized input are blocked in Core. Optional Council
+analysis receives only typed, redacted Project Evidence and remains recommendation-only.
+
+**Local Usage Ledger (v0.17):** APEX records provider/model/token metadata locally and can
+estimate API cost only when the user supplies a dated price. It never stores prompts, responses,
+API keys, subscription balances, or invented prices. Corrupt ledgers are quarantined and
+concurrent writers are serialized.
 
 **Local Management Hub (v0.16):** Settings hosts a per-provider hub to manage API keys
 (add / status / delete), cloud consent + data scope, and model IDs — all wired to the local
@@ -190,7 +200,13 @@ Detailed engineering handoff and version gates: [CLAUDE_HANDOFF.md](CLAUDE_HANDO
 - **v0.16 — Local Management Hub ✅:** one place in Settings to manage per-provider API keys
   (add / status / delete), cloud **consent** + data scope, and **model** IDs — wired to the
   local core APIs. Keys stay in the Windows Credential Manager. No accounts, sync, or session
-  history (those are v0.18 / v2.0).
+  content.
+- **v0.17 — Local Usage Ledger ✅:** local metadata-only AI call history, provider/model/token
+  summaries, and explicitly labelled estimated API cost using user-configured dated prices.
+  No prompt/response content, subscription balance, or fabricated default pricing.
+- **v0.18 — Read-only Project Intelligence (RC):** secure project sessions, bounded scanning,
+  secret/path redaction, typed Project Evidence, CLI/API/Pulse surfaces, and optional
+  Claude → GPT Council analysis. No command execution or project writes.
 - **v1.0 — Stable release:** config file, installer, docs, **code signing** (so Smart App
   Control users can run it), polished UX. First public CLI.
 - **Beyond:** provider adapters for GPT/Claude/Ollama-compatible desktop models, consented

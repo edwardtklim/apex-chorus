@@ -3917,7 +3917,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "velox-app"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "rand 0.8.6",
  "tao",
@@ -3926,7 +3926,7 @@ dependencies = [
 
 [[package]]
 name = "velox-cli"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "clap",
  "dotenv",
@@ -3945,7 +3945,7 @@ dependencies = [
 
 [[package]]
 name = "velox-core"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "encoding_rs",
  "keyring",
@@ -3959,7 +3959,7 @@ dependencies = [
 
 [[package]]
 name = "velox-server"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "axum",
  "dotenv",
