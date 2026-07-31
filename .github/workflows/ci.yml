@@ -45,6 +45,10 @@ jobs:
       - name: Build release workspace
         run: cargo build --workspace --release --locked
 
+      - name: Test authenticated Usage API
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-UsageApi.ps1 -ServerPath ./target/release/velox-server.exe
+
       - name: Stage minimal package for safety inspection
         shell: pwsh
         run: |
