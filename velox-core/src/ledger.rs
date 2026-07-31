@@ -10,6 +10,12 @@
 //! 저장은 원자적이며, 보존 기간이 지난 기록은 자동 정리된다. 기록 자체를 끌 수도 있다.
 
 use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -18,8 +24,21 @@ use crate::privacy::ContextScope;
 /// 세션 원장 파일 (기록 + 설정).
 pub const LEDGER_FILE: &str = "velox_ledger.json";
 
+/// Cross-process writer lock. APEX App and CLI may run at the same time.
+const LOCK_WAIT: Duration = Duration::from_secs(2);
+const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
+
 /// 파일이 무한히 커지지 않도록 보관하는 최대 기록 수.
 pub const MAX_RECORDS: usize = 5_000;
+
+static RECORD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static LEDGER_PROCESS_LOCK: Mutex<()> = Mutex::new(());
+
+fn acquire_process_lock() -> MutexGuard<'static, ()> {
+    LEDGER_PROCESS_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// 한 번의 AI 호출 결과 상태.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -48,11 +67,22 @@ impl SessionStatus {
 }
 
 /// provider가 **응답에 실어 보낸** 토큰 수. 값이 없으면 `None`으로 남긴다(추정하지 않는다).
+///
+/// **정규화 규약 (provider마다 의미가 달라 반드시 맞춰야 한다):**
+/// - `input` = **캐시 읽기를 포함한 총 입력 토큰**
+/// - `cache_read` = 그 중 캐시에서 읽은 **부분집합**
+///
+/// 따라서 비용 계산은 `(input - cache_read)`를 일반 단가로, `cache_read`를 캐시 단가로 매긴다.
+/// OpenAI(`prompt_tokens`)·Gemini(`promptTokenCount`)는 이미 총합이라 그대로 쓰고,
+/// Anthropic은 `input_tokens`가 캐시를 **제외**한 값이라 `cache_read_input_tokens`를 더해서
+/// 총합으로 맞춘다([`crate::ai`]의 파서 참고). 이 규약이 깨지면 캐시 비용이 이중 계산되거나
+/// 입력 비용이 과소 계산된다.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct TokenUsage {
+    /// 캐시 읽기를 **포함한** 총 입력 토큰.
     pub input: Option<u64>,
     pub output: Option<u64>,
-    /// 캐시에서 읽은 입력 토큰(제공하는 provider만).
+    /// `input` 중 캐시에서 읽은 부분(제공하는 provider만).
     pub cache_read: Option<u64>,
 }
 
@@ -117,20 +147,106 @@ pub fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// 원장 로드. 없거나 **손상되면 기본값**(빈 기록) — 손상 파일로 오동작하지 않는다.
-pub fn load() -> Ledger {
-    std::fs::read_to_string(LEDGER_FILE)
+fn load_from(path: &Path) -> Ledger {
+    std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
 }
 
-/// 원장을 원자적으로 저장.
-pub fn save(ledger: &Ledger) -> bool {
+/// 원장 로드. 없거나 **손상되면 기본값**(빈 기록) — 손상 파일로 오동작하지 않는다.
+pub fn load() -> Ledger {
+    load_from(Path::new(LEDGER_FILE))
+}
+
+fn save_to(path: &Path, ledger: &Ledger) -> bool {
+    let Some(path) = path.to_str() else {
+        return false;
+    };
     serde_json::to_string_pretty(ledger)
         .ok()
-        .and_then(|s| crate::ai::atomic_write(LEDGER_FILE, &s).ok())
+        .and_then(|s| crate::ai::atomic_write(path, &s).ok())
         .is_some()
+}
+
+/// 원장을 원자적으로 저장.
+///
+/// 단독 저장은 기존 API 호환용이다. 읽기-수정-쓰기 동작은 아래 잠금 경로를 사용해야 한다.
+pub fn save(ledger: &Ledger) -> bool {
+    save_to(Path::new(LEDGER_FILE), ledger)
+}
+
+struct LedgerFileLock {
+    path: PathBuf,
+}
+
+impl Drop for LedgerFileLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn lock_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+fn acquire_lock(path: &Path) -> io::Result<LedgerFileLock> {
+    let lock_path = lock_path(path);
+    let deadline = Instant::now() + LOCK_WAIT;
+    loop {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(_) => return Ok(LedgerFileLock { path: lock_path }),
+            Err(error)
+                if error.kind() == io::ErrorKind::AlreadyExists
+                    || (error.kind() == io::ErrorKind::PermissionDenied && lock_path.exists()) =>
+            {
+                let stale = std::fs::metadata(&lock_path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|age| age >= STALE_LOCK_AFTER);
+                if stale {
+                    let _ = std::fs::remove_file(&lock_path);
+                    continue;
+                }
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "timed out waiting for the APEX ledger writer lock",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn quarantine_corrupt_file(path: &Path) {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return;
+    };
+    if serde_json::from_str::<Ledger>(&contents).is_ok() {
+        return;
+    }
+    let mut backup = path.as_os_str().to_os_string();
+    backup.push(format!(".corrupt-{}-{}", now_unix(), std::process::id()));
+    let _ = std::fs::rename(path, PathBuf::from(backup));
+}
+
+fn next_record_id() -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let sequence = RECORD_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{millis:x}-{:x}-{sequence:x}", std::process::id())
 }
 
 /// 보존 기간과 최대 개수를 적용해 오래된 기록을 정리한다.
@@ -157,14 +273,41 @@ pub fn record(
     duration_ms: u64,
     usage: Option<TokenUsage>,
 ) {
-    let mut ledger = load();
+    let _ = record_to(
+        Path::new(LEDGER_FILE),
+        feature,
+        provider,
+        model,
+        scope,
+        status,
+        duration_ms,
+        usage,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_to(
+    path: &Path,
+    feature: &str,
+    provider: &str,
+    model: &str,
+    scope: ContextScope,
+    status: SessionStatus,
+    duration_ms: u64,
+    usage: Option<TokenUsage>,
+) -> bool {
+    let _process_lock = acquire_process_lock();
+    let Ok(_lock) = acquire_lock(path) else {
+        return false;
+    };
+    quarantine_corrupt_file(path);
+    let mut ledger = load_from(path);
     if !ledger.settings.enabled {
-        return;
+        return true;
     }
     let now = now_unix();
-    let id = format!("{}-{:04}", now, ledger.records.len() % 10_000);
     ledger.records.push(SessionRecord {
-        id,
+        id: next_record_id(),
         unix_ts: now,
         feature: feature.to_string(),
         provider: provider.to_string(),
@@ -175,32 +318,50 @@ pub fn record(
         usage: usage.filter(|u| !u.is_empty()),
     });
     prune(&mut ledger, now);
-    let _ = save(&ledger);
+    save_to(path, &ledger)
 }
 
 /// 모든 기록 삭제(설정은 유지). 삭제된 건수를 반환.
 pub fn clear() -> usize {
-    let mut ledger = load();
+    let path = Path::new(LEDGER_FILE);
+    let _process_lock = acquire_process_lock();
+    let Ok(_lock) = acquire_lock(path) else {
+        return 0;
+    };
+    quarantine_corrupt_file(path);
+    let mut ledger = load_from(path);
     let n = ledger.records.len();
     ledger.records.clear();
-    let _ = save(&ledger);
+    let _ = save_to(path, &ledger);
     n
 }
 
 /// 기록 on/off.
 pub fn set_enabled(enabled: bool) -> bool {
-    let mut ledger = load();
+    let path = Path::new(LEDGER_FILE);
+    let _process_lock = acquire_process_lock();
+    let Ok(_lock) = acquire_lock(path) else {
+        return false;
+    };
+    quarantine_corrupt_file(path);
+    let mut ledger = load_from(path);
     ledger.settings.enabled = enabled;
-    save(&ledger)
+    save_to(path, &ledger)
 }
 
 /// 보존 기간(일) 설정. 0 = 무기한.
 pub fn set_retention_days(days: u32) -> bool {
-    let mut ledger = load();
+    let path = Path::new(LEDGER_FILE);
+    let _process_lock = acquire_process_lock();
+    let Ok(_lock) = acquire_lock(path) else {
+        return false;
+    };
+    quarantine_corrupt_file(path);
+    let mut ledger = load_from(path);
     ledger.settings.retention_days = days;
     let now = now_unix();
     prune(&mut ledger, now);
-    save(&ledger)
+    save_to(path, &ledger)
 }
 
 // ---------------- 날짜 (UTC, 외부 의존성 없음) ----------------
@@ -358,6 +519,7 @@ pub fn totals(records: &[&SessionRecord]) -> UsageGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     fn rec(
         ts: u64,
@@ -385,6 +547,36 @@ mod tests {
             output: Some(o),
             cache_read: None,
         })
+    }
+
+    fn test_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "apex-ledger-test-{}-{label}-{}.json",
+            std::process::id(),
+            RECORD_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn cleanup_test_files(path: &Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(lock_path(path));
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        let Some(prefix) = path.file_name().and_then(|n| n.to_str()) else {
+            return;
+        };
+        if let Ok(entries) = std::fs::read_dir(parent) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(&format!("{prefix}.corrupt-")))
+                {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
     }
 
     #[test]
@@ -516,5 +708,67 @@ mod tests {
         let s = LedgerSettings::default();
         assert!(s.enabled);
         assert_eq!(s.retention_days, 90);
+    }
+
+    #[test]
+    fn concurrent_writers_do_not_lose_records_or_reuse_ids() {
+        let path = test_path("concurrent");
+        cleanup_test_files(&path);
+
+        let threads: Vec<_> = (0..24)
+            .map(|index| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    record_to(
+                        &path,
+                        &format!("test.{index}"),
+                        "local",
+                        "mock",
+                        ContextScope::Minimal,
+                        SessionStatus::Success,
+                        1,
+                        None,
+                    )
+                })
+            })
+            .collect();
+        for thread in threads {
+            assert!(thread.join().expect("writer thread"), "writer failed");
+        }
+
+        let ledger = load_from(&path);
+        assert_eq!(ledger.records.len(), 24);
+        let ids: BTreeSet<_> = ledger.records.iter().map(|r| &r.id).collect();
+        assert_eq!(ids.len(), ledger.records.len());
+        cleanup_test_files(&path);
+    }
+
+    #[test]
+    fn corrupt_ledger_is_quarantined_before_new_data_is_saved() {
+        let path = test_path("corrupt");
+        cleanup_test_files(&path);
+        std::fs::write(&path, b"{not valid json").expect("write corrupt fixture");
+
+        assert!(record_to(
+            &path,
+            "test.recovery",
+            "local",
+            "mock",
+            ContextScope::Minimal,
+            SessionStatus::Success,
+            1,
+            None,
+        ));
+
+        let recovered = load_from(&path);
+        assert_eq!(recovered.records.len(), 1);
+        let prefix = format!("{}.corrupt-", path.file_name().unwrap().to_string_lossy());
+        let backups = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+            .count();
+        assert_eq!(backups, 1, "corrupt source should be preserved once");
+        cleanup_test_files(&path);
     }
 }

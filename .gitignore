@@ -29,6 +29,8 @@ velox_providers.json
 velox_models.json
 velox_policies.json
 velox_ledger.json
+velox_ledger.json.lock
+velox_ledger.json.corrupt-*
 velox_pricing.json
 velox_profile.json
 velox_baseline.json

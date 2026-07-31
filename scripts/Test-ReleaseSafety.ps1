@@ -28,9 +28,16 @@ function Test-ForbiddenReleasePath {
         'velox_providers.json',
         'velox_models.json',
         'velox_policies.json',
+        'velox_ledger.json',
+        'velox_ledger.json.lock',
+        'velox_pricing.json',
         'velox_profile.json',
         'velox_baseline.json'
     )) {
+        return $true
+    }
+
+    if ($leaf -like 'velox_ledger.json.corrupt-*') {
         return $true
     }
 
