@@ -1,0 +1,59 @@
+name: Rust quality gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: fmt, test, clippy, release
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust components
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - name: Reject tracked secrets and runtime state
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-ReleaseSafety.ps1
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run workspace tests
+        run: cargo test --workspace --locked
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Build release workspace
+        run: cargo build --workspace --release --locked
+
+      - name: Stage minimal package for safety inspection
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .ci-package | Out-Null
+          Copy-Item target/release/velox.exe .ci-package/
+          Copy-Item target/release/velox-server.exe .ci-package/
+          Copy-Item target/release/velox-app.exe .ci-package/
+          Copy-Item README.md,LICENSE .ci-package/
+
+      - name: Inspect staged package
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-ReleaseSafety.ps1 -ArtifactPath .ci-package
