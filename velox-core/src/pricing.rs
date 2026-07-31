@@ -83,6 +83,19 @@ fn parse_date(s: &str) -> Option<(i64, u32, u32)> {
     let y = it.next()?.parse().ok()?;
     let m = it.next()?.parse().ok()?;
     let d = it.next()?.parse().ok()?;
+    if it.next().is_some() || !(1..=12).contains(&m) {
+        return None;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let max_day = match m {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    if !(1..=max_day).contains(&d) {
+        return None;
+    }
     Some((y, m, d))
 }
 
@@ -249,11 +262,26 @@ pub fn estimate(records: &[&SessionRecord], table: &PricingTable, now_unix: u64)
             continue;
         };
         let per_mtok = |tokens: u64, rate: f64| tokens as f64 / 1_000_000.0 * rate;
-        let mut cost = per_mtok(usage.input.unwrap_or(0), price.input_per_mtok)
-            + per_mtok(usage.output.unwrap_or(0), price.output_per_mtok);
-        if let (Some(cached), Some(rate)) = (usage.cache_read, price.cache_read_per_mtok) {
-            cost += per_mtok(cached, rate);
-        }
+        let total_input = usage.input.unwrap_or(0);
+        let input_cost = match (usage.cache_read, price.cache_read_per_mtok) {
+            (Some(cached), Some(cache_rate)) => {
+                // OpenAI/Gemini report cached tokens as a subset of total input.
+                // Charge that subset at the cache rate instead of charging it
+                // once at the normal rate and again at the cache rate.
+                let uncached = total_input.saturating_sub(cached);
+                per_mtok(uncached, price.input_per_mtok) + per_mtok(cached, cache_rate)
+            }
+            (Some(cached), None) if cached > 0 => {
+                // A cache hit with no cache price cannot be represented
+                // honestly. Exclude the whole call instead of fabricating a
+                // normal-input or zero-cost assumption.
+                est.calls_missing_price += 1;
+                missing.insert(r.model.clone());
+                continue;
+            }
+            _ => per_mtok(total_input, price.input_per_mtok),
+        };
+        let cost = input_cost + per_mtok(usage.output.unwrap_or(0), price.output_per_mtok);
         est.known_cost += cost;
         est.priced_calls += 1;
     }
@@ -387,12 +415,56 @@ mod tests {
         assert!(set_price("", 1.0, 2.0, None, "2026-07-24", None).is_err());
         assert!(set_price("m", -1.0, 2.0, None, "2026-07-24", None).is_err());
         assert!(set_price("m", 1.0, 2.0, None, "24/07/2026", None).is_err());
+        assert!(set_price("m", 1.0, 2.0, None, "2026-02-30", None).is_err());
+        assert!(set_price("m", 1.0, 2.0, None, "2026-13-01", None).is_err());
         assert!(set_price("m", f64::NAN, 2.0, None, "2026-07-24", None).is_err());
+    }
+
+    #[test]
+    fn cached_input_replaces_normal_input_cost_instead_of_double_counting() {
+        let mut t = table_with("gpt-4o", 10.0, 20.0);
+        t.models.get_mut("gpt-4o").unwrap().cache_read_per_mtok = Some(1.0);
+        let records = [rec(
+            "gpt-4o",
+            Some(TokenUsage {
+                input: Some(1_000_000),
+                output: Some(100_000),
+                cache_read: Some(800_000),
+            }),
+            SessionStatus::Success,
+        )];
+        let refs: Vec<&SessionRecord> = records.iter().collect();
+        let est = estimate(&refs, &t, 1_785_240_000);
+
+        // 0.2M uncached * $10 + 0.8M cached * $1 + 0.1M output * $20 = $4.8.
+        assert!((est.known_cost - 4.8).abs() < 1e-9);
+        assert!(est.is_complete());
+    }
+
+    #[test]
+    fn cache_hit_without_cache_price_is_not_silently_estimated() {
+        let records = [rec(
+            "gpt-4o",
+            Some(TokenUsage {
+                input: Some(1_000),
+                output: Some(100),
+                cache_read: Some(800),
+            }),
+            SessionStatus::Success,
+        )];
+        let refs: Vec<&SessionRecord> = records.iter().collect();
+        let est = estimate(&refs, &table_with("gpt-4o", 10.0, 20.0), 1_785_240_000);
+
+        assert_eq!(est.priced_calls, 0);
+        assert_eq!(est.calls_missing_price, 1);
+        assert_eq!(est.display(), "unknown");
     }
 
     #[test]
     fn date_math_matches_calendar() {
         assert_eq!(days_between((2026, 1, 1), (2026, 1, 31)), 30);
         assert_eq!(days_between((2026, 1, 1), (2027, 1, 1)), 365);
+        assert_eq!(parse_date("2024-02-29"), Some((2024, 2, 29)));
+        assert_eq!(parse_date("2026-02-29"), None);
     }
 }
