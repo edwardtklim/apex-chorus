@@ -20,6 +20,7 @@ pub mod ledger;
 pub mod policy;
 pub mod pricing;
 pub mod privacy;
+pub mod project;
 pub mod snapshot;
 pub mod util;
 pub mod watch;
