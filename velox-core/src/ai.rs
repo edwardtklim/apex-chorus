@@ -274,7 +274,51 @@ pub async fn route_semantic(prompt: &str) -> String {
 /// 단계에서만 호출된다. 가시성을 `pub(crate)`로 잠가 crate 밖(제품 경로)에서 직접 호출을
 /// **컴파일 단계에서 차단**한다 — 모든 클라우드 호출은 provider 위치·동의·범위·툴 권한을
 /// 강제하는 게이트를 반드시 거친다.
-pub(crate) async fn query_text_with(model: &str, prompt: &str) -> Option<String> {
+/// provider 응답 = 텍스트 + (provider가 준) 토큰 사용량.
+/// 사용량은 **응답에 실제로 들어 있을 때만** 채워진다 — 추정하지 않는다.
+pub(crate) struct ProviderReply {
+    pub text: String,
+    pub usage: Option<crate::ledger::TokenUsage>,
+}
+
+fn u64_at(v: &serde_json::Value) -> Option<u64> {
+    v.as_u64()
+}
+
+/// OpenAI 호환 `usage` 블록 파싱 (OpenAI · Grok · 커스텀).
+fn usage_openai(body: &serde_json::Value) -> Option<crate::ledger::TokenUsage> {
+    let u = &body["usage"];
+    let t = crate::ledger::TokenUsage {
+        input: u64_at(&u["prompt_tokens"]),
+        output: u64_at(&u["completion_tokens"]),
+        cache_read: u64_at(&u["prompt_tokens_details"]["cached_tokens"]),
+    };
+    (!t.is_empty()).then_some(t)
+}
+
+/// Anthropic `usage` 블록 파싱.
+fn usage_anthropic(body: &serde_json::Value) -> Option<crate::ledger::TokenUsage> {
+    let u = &body["usage"];
+    let t = crate::ledger::TokenUsage {
+        input: u64_at(&u["input_tokens"]),
+        output: u64_at(&u["output_tokens"]),
+        cache_read: u64_at(&u["cache_read_input_tokens"]),
+    };
+    (!t.is_empty()).then_some(t)
+}
+
+/// Gemini `usageMetadata` 블록 파싱.
+fn usage_gemini(body: &serde_json::Value) -> Option<crate::ledger::TokenUsage> {
+    let u = &body["usageMetadata"];
+    let t = crate::ledger::TokenUsage {
+        input: u64_at(&u["promptTokenCount"]),
+        output: u64_at(&u["candidatesTokenCount"]),
+        cache_read: u64_at(&u["cachedContentTokenCount"]),
+    };
+    (!t.is_empty()).then_some(t)
+}
+
+pub(crate) async fn query_with_usage(model: &str, prompt: &str) -> Option<ProviderReply> {
     let client = http_client();
     let models = load_models();
     match model {
@@ -292,9 +336,13 @@ pub(crate) async fn query_text_with(model: &str, prompt: &str) -> Option<String>
                 .await
                 .ok()?;
             let body: serde_json::Value = r.json().await.ok()?;
-            body["choices"][0]["message"]["content"]
-                .as_str()
-                .map(|s| s.to_string())
+            let text = body["choices"][0]["message"]["content"]
+                .as_str()?
+                .to_string();
+            Some(ProviderReply {
+                text,
+                usage: usage_openai(&body),
+            })
         }
         "gemini" => {
             let key = api_key_for("gemini")?;
@@ -317,7 +365,10 @@ pub(crate) async fn query_text_with(model: &str, prompt: &str) -> Option<String>
                 .filter_map(|p| p["text"].as_str())
                 .collect::<Vec<_>>()
                 .join("");
-            (!text.is_empty()).then_some(text)
+            (!text.is_empty()).then(|| ProviderReply {
+                text,
+                usage: usage_gemini(&body),
+            })
         }
         "grok" => {
             let key = api_key_for("grok")?;
@@ -333,9 +384,13 @@ pub(crate) async fn query_text_with(model: &str, prompt: &str) -> Option<String>
                 .await
                 .ok()?;
             let body: serde_json::Value = r.json().await.ok()?;
-            body["choices"][0]["message"]["content"]
-                .as_str()
-                .map(|s| s.to_string())
+            let text = body["choices"][0]["message"]["content"]
+                .as_str()?
+                .to_string();
+            Some(ProviderReply {
+                text,
+                usage: usage_openai(&body),
+            })
         }
         "claude" | "anthropic" => {
             let key = api_key_for("claude")?;
@@ -352,7 +407,11 @@ pub(crate) async fn query_text_with(model: &str, prompt: &str) -> Option<String>
                 .await
                 .ok()?;
             let body: serde_json::Value = r.json().await.ok()?;
-            body["content"][0]["text"].as_str().map(|s| s.to_string())
+            let text = body["content"][0]["text"].as_str()?.to_string();
+            Some(ProviderReply {
+                text,
+                usage: usage_anthropic(&body),
+            })
         }
         other => {
             // 커스텀 provider (OpenAI 호환): velox_providers.json 에서 조회
@@ -414,7 +473,7 @@ async fn query_openai_compatible(
     model: &str,
     api_key: &str,
     prompt: &str,
-) -> Option<String> {
+) -> Option<ProviderReply> {
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let mut req = client
         .post(&url)
@@ -428,9 +487,13 @@ async fn query_openai_compatible(
     }
     let r = req.send().await.ok()?;
     let body: serde_json::Value = r.json().await.ok()?;
-    body["choices"][0]["message"]["content"]
-        .as_str()
-        .map(|s| s.to_string())
+    let text = body["choices"][0]["message"]["content"]
+        .as_str()?
+        .to_string();
+    Some(ProviderReply {
+        text,
+        usage: usage_openai(&body),
+    })
 }
 
 #[cfg(test)]
@@ -548,7 +611,7 @@ mod net_tests {
         let base = spawn_mock(r#"{"choices":[{"message":{"content":"mocked reply"}}]}"#);
         let client = http_client();
         let got = query_openai_compatible(&client, &base, "test-model", "", "hi").await;
-        assert_eq!(got, Some("mocked reply".to_string()));
+        assert_eq!(got.map(|r| r.text), Some("mocked reply".to_string()));
     }
 
     #[tokio::test]
@@ -557,6 +620,56 @@ mod net_tests {
         let base = spawn_mock(r#"{"error":"rate limited"}"#);
         let client = http_client();
         let got = query_openai_compatible(&client, &base, "test-model", "", "hi").await;
-        assert_eq!(got, None);
+        assert!(got.is_none());
+    }
+
+    #[tokio::test]
+    async fn captures_token_usage_when_provider_reports_it() {
+        // provider가 usage를 주면 그대로 기록한다(지어내지 않는다).
+        let base = spawn_mock(
+            r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":12,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":4}}}"#,
+        );
+        let client = http_client();
+        let got = query_openai_compatible(&client, &base, "test-model", "", "hi")
+            .await
+            .expect("응답 파싱");
+        let usage = got.usage.expect("usage 파싱");
+        assert_eq!(usage.input, Some(12));
+        assert_eq!(usage.output, Some(3));
+        assert_eq!(usage.cache_read, Some(4));
+    }
+
+    #[tokio::test]
+    async fn usage_absent_stays_none_not_zero() {
+        // usage 필드가 없으면 0으로 채우지 않고 None(= usage unavailable).
+        let base = spawn_mock(r#"{"choices":[{"message":{"content":"ok"}}]}"#);
+        let client = http_client();
+        let got = query_openai_compatible(&client, &base, "test-model", "", "hi")
+            .await
+            .expect("응답 파싱");
+        assert!(got.usage.is_none());
+    }
+
+    #[test]
+    fn anthropic_and_gemini_usage_shapes_parse() {
+        let anthropic = serde_json::json!({
+            "usage": {"input_tokens": 30, "output_tokens": 7, "cache_read_input_tokens": 11}
+        });
+        let u = usage_anthropic(&anthropic).expect("anthropic usage");
+        assert_eq!(
+            (u.input, u.output, u.cache_read),
+            (Some(30), Some(7), Some(11))
+        );
+
+        let gemini = serde_json::json!({
+            "usageMetadata": {"promptTokenCount": 40, "candidatesTokenCount": 9}
+        });
+        let g = usage_gemini(&gemini).expect("gemini usage");
+        assert_eq!((g.input, g.output), (Some(40), Some(9)));
+        assert!(g.cache_read.is_none());
+
+        // 빈 응답은 None.
+        assert!(usage_anthropic(&serde_json::json!({})).is_none());
+        assert!(usage_gemini(&serde_json::json!({})).is_none());
     }
 }

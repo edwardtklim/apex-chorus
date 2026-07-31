@@ -6,8 +6,9 @@
 //! 원칙: **deny-by-default, fail-closed.** 명시적으로 부여하지 않은 권한은 닫혀 있고,
 //! 알 수 없는 provider/scope/tool이나 손상된 정책 파일은 절대 permissive로 폴백하지 않는다.
 //!
-//! 강제 지점은 [`execute_agent`] — 정책 검사를 통과해야만 `query_text_with`를 호출한다.
-//! 기존 `query_text_with` 직접 경로는 이 단계에서 유지되고, 새 경로만 게이트를 탄다.
+//! 강제 지점은 [`execute_agent`] — 정책 검사를 통과해야만 provider를 호출한다. provider 호출
+//! 함수는 `pub(crate)`라 crate 밖에서 직접 부를 수 없고, 이 게이트가 유일한 통로다.
+//! (v0.17부터 이 지점에서 세션 원장에 메타데이터·토큰 사용량도 기록한다.)
 //! (Council 역할 정책과 Settings UI는 아직 구현하지 않음.)
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -354,17 +355,77 @@ pub fn authorize(req: &AgentRequest) -> Result<Authorization, PolicyError> {
     )
 }
 
-/// 정책 게이트웨이: `authorize` 통과 → `query_text_with` 호출.
-/// 검사에 실패하면 AI를 **호출하지 않는다** (5단계: 마지막이 query_text_with).
+/// [`AgentPurpose`] → 원장에 기록할 기능 이름.
+fn feature_label(p: AgentPurpose) -> &'static str {
+    match p {
+        AgentPurpose::Diagnose => "diagnose",
+        AgentPurpose::Propose => "council.propose",
+        AgentPurpose::Review => "council.review",
+        AgentPurpose::Revise => "council.revise",
+        AgentPurpose::Consensus => "consensus",
+        AgentPurpose::Other => "other",
+    }
+}
+
+/// 정책 게이트웨이: `authorize` 통과 → provider 호출.
+/// 검사에 실패하면 AI를 **호출하지 않는다** (5단계: 마지막이 provider 호출).
+///
+/// 이 함수는 모든 클라우드 호출의 **유일한 통로**이므로, 여기서 세션 원장에 기록하면
+/// 누락이 생길 수 없다. 기록되는 것은 메타데이터 + provider가 준 토큰 수뿐이며,
+/// 프롬프트·응답은 [`crate::ledger`]의 스키마상 저장할 수 없다.
 pub async fn execute_agent(req: AgentRequest) -> Result<AgentResponse, PolicyError> {
-    let auth = authorize(&req)?;
-    match crate::ai::query_text_with(&req.provider, &req.prompt).await {
-        Some(text) => Ok(AgentResponse {
-            provider: req.provider,
-            text,
-            tools_requiring_confirmation: auth.tools_requiring_confirmation,
-        }),
-        None => Err(PolicyError::ProviderCallFailed(req.provider)),
+    let feature = feature_label(req.purpose);
+    let model = crate::ai::model_name(&req.provider);
+    let started = std::time::Instant::now();
+
+    let auth = match authorize(&req) {
+        Ok(a) => a,
+        Err(e) => {
+            // 정책 거부도 기록한다 (호출은 나가지 않았음).
+            crate::ledger::record(
+                feature,
+                &req.provider,
+                &model,
+                req.scope,
+                crate::ledger::SessionStatus::PolicyDenied,
+                started.elapsed().as_millis() as u64,
+                None,
+            );
+            return Err(e);
+        }
+    };
+
+    let reply = crate::ai::query_with_usage(&req.provider, &req.prompt).await;
+    let elapsed = started.elapsed().as_millis() as u64;
+    match reply {
+        Some(r) => {
+            crate::ledger::record(
+                feature,
+                &req.provider,
+                &model,
+                req.scope,
+                crate::ledger::SessionStatus::Success,
+                elapsed,
+                r.usage,
+            );
+            Ok(AgentResponse {
+                provider: req.provider,
+                text: r.text,
+                tools_requiring_confirmation: auth.tools_requiring_confirmation,
+            })
+        }
+        None => {
+            crate::ledger::record(
+                feature,
+                &req.provider,
+                &model,
+                req.scope,
+                crate::ledger::SessionStatus::Failed,
+                elapsed,
+                None,
+            );
+            Err(PolicyError::ProviderCallFailed(req.provider))
+        }
     }
 }
 
