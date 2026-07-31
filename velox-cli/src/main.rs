@@ -14,6 +14,7 @@ mod snapshot;
 mod tempcheck;
 mod thermals;
 mod timeline;
+mod usage;
 
 use clap::{Parser, Subcommand};
 use dotenv::dotenv;
@@ -120,6 +121,72 @@ enum Commands {
         #[command(subcommand)]
         action: ChorusCommands,
     },
+    /// APEX가 호출한 AI 사용량·추정 비용 (로컬 기록 · 구독 청구서 아님)
+    Usage {
+        #[command(subcommand)]
+        action: UsageCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum UsageCommands {
+    /// 기간 요약 — 추정 비용·호출·토큰
+    Summary {
+        #[arg(long, default_value = "month")]
+        period: String,
+    },
+    /// provider·모델별 분해
+    Providers {
+        #[arg(long, default_value = "month")]
+        period: String,
+    },
+    /// 최근 세션 목록 (메타데이터만)
+    Sessions {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// 기록 내보내기: usage export --format json|csv [--out FILE]
+    Export {
+        #[arg(long, default_value = "json")]
+        format: String,
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// 모든 세션 기록 삭제
+    Clear,
+    /// 기록 켜기/끄기: usage recording on|off
+    Recording { state: String },
+    /// 보존 기간(일) 설정, 0=무기한
+    Retention { days: u32 },
+    /// 단가표 — 공개 단가를 직접 입력해야 비용이 계산됩니다
+    Pricing {
+        #[command(subcommand)]
+        action: PricingCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum PricingCommands {
+    /// 현재 단가표 보기
+    Show,
+    /// 모델 단가 설정 (100만 토큰당, provider 콘솔의 공개 단가)
+    Set {
+        model: String,
+        #[arg(long)]
+        input: f64,
+        #[arg(long)]
+        output: f64,
+        #[arg(long)]
+        cache: Option<f64>,
+        /// 단가를 확인한 날짜 YYYY-MM-DD
+        #[arg(long)]
+        date: String,
+        /// 출처(콘솔 URL 등)
+        #[arg(long)]
+        source: Option<String>,
+    },
+    /// 모델 단가 삭제
+    Remove { model: String },
 }
 
 #[derive(Subcommand)]
@@ -323,6 +390,31 @@ async fn main() {
             ChorusCommands::Test => chorus::test_all().await,
             ChorusCommands::Bench { hard } => chorus::bench(hard).await,
             ChorusCommands::Consensus { question } => chorus::consensus(&question).await,
+        },
+        Commands::Usage { action } => match action {
+            UsageCommands::Summary { period } => usage::summary(&period),
+            UsageCommands::Providers { period } => usage::providers(&period),
+            UsageCommands::Sessions { limit } => usage::sessions(limit),
+            UsageCommands::Export { format, out } => usage::export(&format, out.as_deref()),
+            UsageCommands::Clear => usage::clear(),
+            UsageCommands::Recording { state } => match state.trim().to_lowercase().as_str() {
+                "on" | "true" => usage::recording(true),
+                "off" | "false" => usage::recording(false),
+                other => println!("✗ 알 수 없는 값: {other} (on / off)"),
+            },
+            UsageCommands::Retention { days } => usage::retention(days),
+            UsageCommands::Pricing { action } => match action {
+                PricingCommands::Show => usage::pricing_show(),
+                PricingCommands::Set {
+                    model,
+                    input,
+                    output,
+                    cache,
+                    date,
+                    source,
+                } => usage::pricing_set(&model, input, output, cache, &date, source.as_deref()),
+                PricingCommands::Remove { model } => usage::pricing_remove(&model),
+            },
         },
     }
 }

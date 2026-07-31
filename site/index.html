@@ -187,7 +187,11 @@
     <h2>Settings</h2>
     <p class="rsub">Provider 관리 (키 · 동의 · 모델) · 업데이트 · 버전.</p>
     <p class="muted" style="font-size:13px;margin:0 0 14px;max-width:560px">API 키는 Windows Credential Manager에 저장되고 값은 UI/API에 다시 표시되지 않습니다 · 클라우드 호출은 동의 전까지 차단(deny-by-default).</p>
-    <div id="hub" style="max-width:560px;margin-bottom:36px"></div>
+    <div id="hub" style="max-width:560px;margin-bottom:28px"></div>
+    <div style="max-width:560px;margin-bottom:36px">
+      <div style="font-size:13px;font-weight:500;margin-bottom:6px">Usage</div>
+      <div id="usage" class="hubcard"><span class="muted" style="font-size:13px">불러오는 중…</span></div>
+    </div>
     <div>
       <div style="font-size:13px;font-weight:500;margin-bottom:6px">Updates</div>
       <div id="update-status" class="muted" style="font-size:14px">확인 중…</div>
@@ -267,7 +271,7 @@ function afterLogin(){
 function saveName(){ var n=(val('pc-name')||'').trim(); if(!n)return;
   fetch('/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pc_name:n})}).then(function(){closeGate(n);}).catch(function(){closeGate(n);}); }
 function closeGate(name){ document.getElementById('gate').style.display='none'; if(name){document.getElementById('app-brand').textContent='APEX Velox · '+name;} afterAuth(); }
-function afterAuth(){ refreshLive(); setInterval(function(){ if(activeRoom==='overview') refreshLive(); },3000); renderHub(); checkUpdate(); }
+function afterAuth(){ refreshLive(); setInterval(function(){ if(activeRoom==='overview') refreshLive(); },3000); renderHub(); renderUsage(); checkUpdate(); }
 
 var activeRoom='overview';
 function showRoom(r){
@@ -275,7 +279,7 @@ function showRoom(r){
   var rooms=document.querySelectorAll('.room'); for(var i=0;i<rooms.length;i++){ rooms[i].classList.toggle('active', rooms[i].id==='room-'+r); }
   var tabs=document.querySelectorAll('.tab'); for(var k=0;k<tabs.length;k++){ tabs[k].classList.toggle('active', tabs[k].getAttribute('data-room')===r); }
   if(r==='overview') refreshLive();
-  if(r==='settings') renderHub();
+  if(r==='settings'){ renderHub(); renderUsage(); }
 }
 
 function refreshLive(){
@@ -466,6 +470,60 @@ function hubConsent(id){ postJSON('/policies/consent',{provider:id,scope:val('hs
 function hubRevoke(id){ if(!confirm(id+' 클라우드 동의를 철회할까요? (다음 사용 시 다시 동의 필요)'))return; postJSON('/policies/'+id,null,'DELETE').then(function(){ renderHub(); }); }
 function hubSetModel(id){ var m=val('hm-'+id); if(!m||!m.trim())return; postJSON('/models',{provider:id,model:m}).then(function(res){ if(res&&res.ok===false)alert('모델 저장 실패: '+(res.error||'')); renderHub(); }); }
 function hubResetModel(id){ postJSON('/models/'+id,null,'DELETE').then(function(){ renderHub(); }); }
+
+// --- Usage & estimated cost (APEX가 기록한 사용량만 · 구독 청구서 아님) ---
+function renderUsage(){
+  var host=document.getElementById('usage'); if(!host) return;
+  fetch('/usage/summary?period=month').then(j).then(function(u){
+    host.innerHTML='';
+    var t=u.totals||{}, c=u.cost||{};
+    var head=el('div','hubhead');
+    head.appendChild(el('div','nm','This month'));
+    head.appendChild(el('span','pill '+(u.recording_enabled?'on':'off'), u.recording_enabled?'기록 중':'기록 꺼짐'));
+    host.appendChild(head);
+
+    var big=el('div',null); big.style.cssText='font-size:26px;font-weight:600;letter-spacing:-.02em;margin:2px 0 2px';
+    big.textContent=c.display||'unknown'; host.appendChild(big);
+    host.appendChild(el('div','muted','Estimated API cost · APEX-recorded usage only'));
+    host.appendChild(el('div','muted','Not subscription billing or provider balance'));
+    if(c.pricing_unconfigured){ host.appendChild(el('div','muted','단가 미설정 → unknown. CLI: velox usage pricing set <model> --input <USD/1M> --output <USD/1M> --date YYYY-MM-DD')); }
+    else { host.appendChild(el('div','muted','Pricing v'+(c.pricing_version||'?')+' · updated: '+(c.pricing_updated||'미기재')+(c.pricing_stale?' ⚠ 오래됨':''))); }
+    if(c.calls_missing_price>0) host.appendChild(el('div','muted','단가 없는 호출 '+c.calls_missing_price+'건 제외 ('+(c.models_missing_price||[]).join(', ')+')'));
+    if(c.calls_missing_usage>0) host.appendChild(el('div','muted','usage unavailable '+c.calls_missing_usage+'건 제외'));
+
+    var stats=el('div',null); stats.style.cssText='display:grid;grid-template-columns:repeat(2,1fr);gap:6px 14px;margin-top:12px;font-size:13px';
+    var add=function(k,v){ var r=el('div',null); r.style.cssText='display:flex;justify-content:space-between;gap:10px';
+      var kk=el('span','muted',k), vv=el('span',null,v); vv.style.fontVariantNumeric='tabular-nums'; r.appendChild(kk); r.appendChild(vv); stats.appendChild(r); };
+    add('호출', String(t.calls||0));
+    add('성공/실패', (t.success||0)+' / '+(t.failed||0));
+    add('입력 토큰', String(t.input_tokens||0));
+    add('출력 토큰', String(t.output_tokens||0));
+    add('취소', String(t.cancelled||0));
+    add('정책 거부', String(t.policy_denied||0));
+    host.appendChild(stats);
+
+    (u.by_provider||[]).forEach(function(g){
+      var r=el('div',null); r.style.cssText='display:flex;justify-content:space-between;font-size:12.5px;margin-top:6px';
+      r.appendChild(el('span','muted',g.key));
+      var v=el('span',null,g.calls+'회 · in '+g.input_tokens+' / out '+g.output_tokens); v.style.fontVariantNumeric='tabular-nums';
+      r.appendChild(v); host.appendChild(r);
+    });
+
+    if((u.recent||[]).length){
+      host.appendChild(el('div','muted','최근 세션 (메타데이터만 · 프롬프트·응답 저장 안 함)'));
+      u.recent.slice(0,5).forEach(function(s){
+        var r=el('div',null); r.style.cssText='display:flex;justify-content:space-between;font-size:12px;color:var(--muted)';
+        r.appendChild(el('span',null,s.date+' '+s.feature+' · '+s.provider));
+        r.appendChild(el('span',null,s.status)); host.appendChild(r);
+      });
+    }
+
+    var acts=el('div','btnrow'); acts.style.marginTop='12px';
+    var toggle=miniBtn(u.recording_enabled?'기록 끄기':'기록 켜기',false,function(){ postJSON('/usage/recording',{enabled:!u.recording_enabled}).then(renderUsage); });
+    var wipe=miniBtn('기록 삭제',true,function(){ if(confirm('세션 기록을 모두 삭제할까요? (설정은 유지)')) postJSON('/usage/records',null,'DELETE').then(renderUsage); });
+    acts.appendChild(toggle); acts.appendChild(wipe); host.appendChild(acts);
+  }).catch(function(){ host.innerHTML=''; host.appendChild(el('span','muted','사용량을 불러오지 못했습니다.')); });
+}
 function checkUpdate(){ var st=document.getElementById('update-status'),link=document.getElementById('update-link');
   fetch('/version').then(j).then(function(v){ var cur=v.version; st.textContent='현재 버전: v'+cur+' · 최신 확인 중…';
     fetch('https://api.github.com/repos/edwardtklim/apex-chorus/releases/latest').then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(rel){ var latest=(rel.tag_name||'').replace(/^v/,''); if(latest&&latest!==cur){ st.textContent='업데이트 있음: v'+cur+' → v'+latest; link.style.display='inline-flex'; } else { st.textContent='최신 버전입니다 (v'+cur+')'; } }).catch(function(){ st.textContent='현재 버전: v'+cur+' — 공개 릴리스 없음/확인 실패'; });

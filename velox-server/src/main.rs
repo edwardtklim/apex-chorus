@@ -54,6 +54,9 @@ async fn main() {
         .route("/policies/:provider", delete(policies_revoke))
         .route("/models", get(models_status).post(models_set))
         .route("/models/:provider", delete(models_reset))
+        .route("/usage/summary", get(usage_summary))
+        .route("/usage/recording", post(usage_recording))
+        .route("/usage/records", delete(usage_clear))
         .route("/run/:cmd", get(run_cmd))
         .route("/diagnose/stream", get(diagnose_stream))
         .route("/council/stream", get(council_stream))
@@ -300,6 +303,83 @@ async fn models_set(Json(req): Json<ModelSetReq>) -> Json<serde_json::Value> {
         Ok(model) => Json(serde_json::json!({ "ok": true, "model": model })),
         Err(error) => Json(serde_json::json!({ "ok": false, "error": error })),
     }
+}
+
+/// APEX가 기록한 사용량 요약 + **추정** 비용.
+/// 표시 규칙: `Estimated API cost` · `APEX-recorded usage only` ·
+/// 구독 청구서/잔액이 아님. 단가 미설정이면 비용은 unknown.
+async fn usage_summary(Query(q): Query<UsageQuery>) -> Json<serde_json::Value> {
+    let period =
+        velox_core::ledger::Period::parse(&q.period).unwrap_or(velox_core::ledger::Period::Month);
+    let ledger = velox_core::ledger::load();
+    let now = velox_core::ledger::now_unix();
+    let records = velox_core::ledger::in_period(&ledger.records, period, now);
+    let totals = velox_core::ledger::totals(&records);
+    let est = velox_core::pricing::estimate(&records, &velox_core::pricing::load(), now);
+    let recent: Vec<serde_json::Value> = ledger
+        .records
+        .iter()
+        .rev()
+        .take(10)
+        .map(|r| {
+            serde_json::json!({
+                "date": velox_core::ledger::date_string(r.unix_ts),
+                "feature": r.feature,
+                "provider": r.provider,
+                "model": r.model,
+                "status": r.status.label(),
+                "duration_ms": r.duration_ms,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "period": period.label(),
+        "recording_enabled": ledger.settings.enabled,
+        "retention_days": ledger.settings.retention_days,
+        "totals": totals,
+        "by_provider": velox_core::ledger::by_provider(&records),
+        "cost": {
+            "display": est.display(),
+            "complete": est.is_complete(),
+            "currency": est.currency,
+            "pricing_unconfigured": est.pricing_unconfigured,
+            "pricing_stale": est.pricing_stale,
+            "pricing_version": est.pricing_version,
+            "pricing_updated": est.pricing_effective_date,
+            "calls_missing_price": est.calls_missing_price,
+            "calls_missing_usage": est.calls_missing_usage,
+            "models_missing_price": est.models_missing_price,
+        },
+        "recent": recent,
+        "notice": "Estimated API cost · APEX-recorded usage only · not subscription billing or provider balance",
+    }))
+}
+
+#[derive(Deserialize, Default)]
+struct UsageQuery {
+    #[serde(default = "default_period")]
+    period: String,
+}
+
+fn default_period() -> String {
+    "month".into()
+}
+
+/// 기록 on/off (사용자의 명시적 조작으로만).
+#[derive(Deserialize)]
+struct RecordingReq {
+    enabled: bool,
+}
+
+async fn usage_recording(Json(req): Json<RecordingReq>) -> Json<serde_json::Value> {
+    let ok = velox_core::ledger::set_enabled(req.enabled);
+    Json(serde_json::json!({ "ok": ok, "enabled": req.enabled }))
+}
+
+/// 모든 세션 기록 삭제.
+async fn usage_clear() -> Json<serde_json::Value> {
+    let removed = velox_core::ledger::clear();
+    Json(serde_json::json!({ "ok": true, "removed": removed }))
 }
 
 /// provider의 모델을 기본값으로 초기화.
