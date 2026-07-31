@@ -10,6 +10,7 @@ mod drivers;
 mod fps;
 mod fpscheck;
 mod gpu;
+mod project;
 mod snapshot;
 mod tempcheck;
 mod thermals;
@@ -125,6 +126,27 @@ enum Commands {
     Usage {
         #[command(subcommand)]
         action: UsageCommands,
+    },
+    /// 선택한 프로젝트를 안전하게 스캔하거나 읽기 전용 Council 분석
+    Project {
+        #[command(subcommand)]
+        action: ProjectCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectCommands {
+    /// 프로젝트 구조·언어·TODO를 로컬에서 스캔 (파일 수정/명령 실행 없음)
+    Scan {
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// 승인된 최소 Evidence만 Claude→GPT Council로 분석 (읽기 전용)
+    Analyze {
+        path: String,
+        #[arg(long)]
+        objective: Option<String>,
     },
 }
 
@@ -415,6 +437,12 @@ async fn main() {
                 } => usage::pricing_set(&model, input, output, cache, &date, source.as_deref()),
                 PricingCommands::Remove { model } => usage::pricing_remove(&model),
             },
+        },
+        Commands::Project { action } => match action {
+            ProjectCommands::Scan { path, json } => project::scan(&path, json),
+            ProjectCommands::Analyze { path, objective } => {
+                project::analyze(&path, objective.as_deref()).await
+            }
         },
     }
 }

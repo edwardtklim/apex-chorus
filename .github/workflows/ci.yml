@@ -49,6 +49,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-UsageApi.ps1 -ServerPath ./target/release/velox-server.exe
 
+      - name: Test authenticated read-only Project API
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-ProjectApi.ps1 -ServerPath ./target/release/velox-server.exe
+
       - name: Stage minimal package for safety inspection
         shell: pwsh
         run: |

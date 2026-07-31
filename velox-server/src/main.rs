@@ -57,6 +57,7 @@ async fn main() {
         .route("/usage/summary", get(usage_summary))
         .route("/usage/recording", post(usage_recording))
         .route("/usage/records", delete(usage_clear))
+        .route("/project/scan", post(project_scan))
         .route("/run/:cmd", get(run_cmd))
         .route("/diagnose/stream", get(diagnose_stream))
         .route("/council/stream", get(council_stream))
@@ -115,6 +116,71 @@ async fn health() -> &'static str {
 /// 현재 앱 버전.
 async fn version() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "version": APP_VERSION }))
+}
+
+#[derive(Deserialize)]
+struct ProjectScanRequest {
+    path: String,
+}
+
+/// Scan a local project without executing commands, writing files, or sending
+/// project data to a cloud provider. The response deliberately omits the
+/// absolute project root.
+async fn project_scan(
+    Json(request): Json<ProjectScanRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if request.path.trim().is_empty() {
+        return Err(project_api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_project_path",
+            "Choose a local project directory.",
+        ));
+    }
+
+    let result = tokio::task::spawn_blocking(move || {
+        let session = velox_core::project::open(
+            std::path::Path::new(&request.path),
+            velox_core::project::ProjectLimits::default(),
+        )?;
+        let name = session.name().to_owned();
+        let scan = session.scan();
+        Ok::<_, velox_core::project::ProjectError>((name, scan))
+    })
+    .await;
+
+    match result {
+        Ok(Ok((name, scan))) => Ok(Json(serde_json::json!({
+            "project": { "name": name },
+            "scan": scan,
+            "safety": {
+                "read_only": true,
+                "cloud_sent": false,
+                "writes_performed": false,
+                "commands_executed": false
+            }
+        }))),
+        Ok(Err(_)) => Err(project_api_error(
+            StatusCode::BAD_REQUEST,
+            "scan_failed",
+            "The project could not be scanned. Check the directory and its permissions.",
+        )),
+        Err(_) => Err(project_api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "scan_unavailable",
+            "The project scanner is temporarily unavailable.",
+        )),
+    }
+}
+
+fn project_api_error(
+    status: StatusCode,
+    code: &'static str,
+    message: &'static str,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        status,
+        Json(serde_json::json!({ "error": { "code": code, "message": message } })),
+    )
 }
 
 /// 현재 스냅샷을 기준(baseline)으로 저장한다.
