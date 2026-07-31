@@ -286,6 +286,7 @@ fn u64_at(v: &serde_json::Value) -> Option<u64> {
 }
 
 /// OpenAI 호환 `usage` 블록 파싱 (OpenAI · Grok · 커스텀).
+/// `prompt_tokens`는 **캐시 읽기를 포함한 총합**이라 그대로 쓴다(규약과 일치).
 fn usage_openai(body: &serde_json::Value) -> Option<crate::ledger::TokenUsage> {
     let u = &body["usage"];
     let t = crate::ledger::TokenUsage {
@@ -297,17 +298,29 @@ fn usage_openai(body: &serde_json::Value) -> Option<crate::ledger::TokenUsage> {
 }
 
 /// Anthropic `usage` 블록 파싱.
+///
+/// Anthropic은 `input_tokens`가 캐시를 **제외한** 값이고 `cache_read_input_tokens`가 별도다.
+/// [`crate::ledger::TokenUsage`] 규약(`input` = 캐시 포함 총합)에 맞추려면 **더해서** 정규화해야
+/// 한다. 그러지 않으면 비용 계산이 캐시분만큼 입력을 과소 계산한다.
 fn usage_anthropic(body: &serde_json::Value) -> Option<crate::ledger::TokenUsage> {
     let u = &body["usage"];
+    let uncached_input = u64_at(&u["input_tokens"]);
+    let cache_read = u64_at(&u["cache_read_input_tokens"]);
+    let input = match (uncached_input, cache_read) {
+        (Some(i), Some(c)) => Some(i.saturating_add(c)),
+        (i, None) => i,
+        (None, Some(c)) => Some(c),
+    };
     let t = crate::ledger::TokenUsage {
-        input: u64_at(&u["input_tokens"]),
+        input,
         output: u64_at(&u["output_tokens"]),
-        cache_read: u64_at(&u["cache_read_input_tokens"]),
+        cache_read,
     };
     (!t.is_empty()).then_some(t)
 }
 
 /// Gemini `usageMetadata` 블록 파싱.
+/// `promptTokenCount`는 캐시(`cachedContentTokenCount`)를 **포함한 총합**이라 그대로 쓴다.
 fn usage_gemini(body: &serde_json::Value) -> Option<crate::ledger::TokenUsage> {
     let u = &body["usageMetadata"];
     let t = crate::ledger::TokenUsage {
@@ -655,11 +668,17 @@ mod net_tests {
         let anthropic = serde_json::json!({
             "usage": {"input_tokens": 30, "output_tokens": 7, "cache_read_input_tokens": 11}
         });
+        // Anthropic은 input_tokens가 캐시를 **제외**한 값 → 규약(input = 캐시 포함 총합)에 맞게
+        // 합산해야 한다. 합산하지 않으면 비용이 캐시분만큼 과소 계산된다.
         let u = usage_anthropic(&anthropic).expect("anthropic usage");
         assert_eq!(
             (u.input, u.output, u.cache_read),
-            (Some(30), Some(7), Some(11))
+            (Some(41), Some(7), Some(11))
         );
+        // 캐시 필드가 없으면 그대로 둔다.
+        let no_cache = serde_json::json!({"usage": {"input_tokens": 30, "output_tokens": 7}});
+        let n = usage_anthropic(&no_cache).expect("anthropic usage");
+        assert_eq!((n.input, n.cache_read), (Some(30), None));
 
         let gemini = serde_json::json!({
             "usageMetadata": {"promptTokenCount": 40, "candidatesTokenCount": 9}
