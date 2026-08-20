@@ -903,7 +903,27 @@ Provider마다 HTTP 응답 파싱을 `ai.rs` 한 함수에 계속 쌓지 않는�
 
 ---
 
-## v0.21.0 — Public Beta Candidate
+## v0.21.0 — Second Growth Protocol (Platform Architecture)
+
+> **2026-08-20 로드맵 재배치(태경 지시).** Second Growth Protocol 문서가 지정한
+> 플랫폼 전환(apex-core / apexd / apex-secrets / apex-policy / apex-events /
+> apex-storage / apex-protocol + products 재편)은 **v0.21** 로 둔다.
+> 문서는 이 작업을 v0.19 로 적었으나 v0.19.0 은 Product Hardening 으로 이미 릴리스됐다.
+>
+> 목표: 기능 추가가 아니라 **Foundation**. AEGIS·ATLAS 는 module boundary 만 만들고
+> 구현하지 않는다. Big bang rewrite 금지 — incremental migration.
+>
+> 성공 조건은 기능 개수가 아니라 아래 질문에 YES 인지다.
+> - Velox 가 APEX Core 위의 product 로 도는가
+> - 다른 product 를 인프라 중복 없이 추가할 수 있는가
+> - secret 을 개별 product 가 아니라 APEX 가 관리하는가
+> - permission 을 중앙에서 강제할 수 있는가
+> - product 간 결합 없이 통신할 수 있는가
+> - Aegis·Atlas 를 나중에 또 대규모 재작성 없이 붙일 수 있는가
+
+---
+
+## v0.22.0 — Public Beta Candidate
 
 ### 목표
 
@@ -1085,61 +1105,42 @@ push/tag/release status:
 
 # 최우선 다음 작업
 
-*(2026-08-19 갱신 — v0.15~v0.18 은 전부 완료·게시됨)*
+*(2026-08-20 갱신 — v0.19.0 Product Hardening 릴리스 완료)*
 
-현재 위치: **v0.19.0 Product Hardening**. 목표는 "개발자 머신이 아닌 새 Windows PC에서
-설치하고 쓸 수 있는 품질"이다. 아래 순서만 따른다.
+현재 위치: **v0.20.0 Closed Alpha / Real Repair Workflow**.
+목표는 기능이 아니라 **결과 검증**이다. 실제 PC에서 돌려 데이터를 얻는다.
 
 ```text
-1. [완료] Config 위치 분리 — 전 크레이트 완료(core+cli+server). 문서 끝 참고
-          velox-core::paths → %LOCALAPPDATA%\APEX\Velox (VELOX_DATA_DIR 로 override)
-          레거시 파일 자동 이전 포함
-2. [완료] Logging — velox-core::logging. tracing + 강제 레닥션 writer + 일일 회전(7개 보관) + export 미리보기
-3. [완료] Error UX — velox-core::guidance. 모든 실패가 요약·이유·다음 행동 3단으로
-4. [완료] Installer/Updater — Install/Update/New-ReleasePackage 3종. 제어판 등록·실행중 교체 금지·checksum·롤백
-5. [v3 로 연기] 코드 서명 — 태경 지시(2026-08-20). 실제 판매·앱 런칭 시점까지 미룬다
-6. [진행] RC 검증 완료(설치·가드·제거·데이터 보존 실측) → 태그 → 릴리스. 깨끗한 VM 설치는 미검증
+1. [완료] Repair Report — velox-core::report + velox report capture/repair
+          결정론적 판정(AI 없음) · 기준 명시 · Unknown 정직 처리 · 자체완결 HTML
+2. Alpha 지표 수집 — 실행 성공률·완료율·소요시간·취소율·센서 미지원률
+                     ·policy 거부 사유·crash·잘못된 경고. 전부 로컬, 업로드 없음
+3. 실제 장비 검증  ← 태경만 할 수 있음
+   - 최소 2대의 서로 다른 PC에서 전체 흐름 완료
+   - 사용자 1명이 개발자 도움 없이 실행
+   - 측정 재현성 기록
+4. 발견된 P0/P1 버그 수정
+5. v0.20.0 태그 → 릴리스
 ```
 
-## 담당 체계 (2026-08-20 변경)
+그다음이 **v0.21 Second Growth Protocol**(플랫폼 전환)이다.
+v0.20에서 얻은 실사용 데이터가 v0.21의 설계 근거가 된다 —
+아무도 안 써본 제품을 위한 인프라를 만들지 않기 위해서다.
 
-2026-07-31 의 2인 엔지니어 분담(Claude=core / GPT=cli·server·app·site·CI)은
-**태경 지시로 종료**했다. GPT 는 다른 작업으로 이동했고, **Claude 가 리포 전체를 단독으로 맡는다.**
+## 담당 체계
 
 ```text
 Claude : 리포 전체 (velox-core / cli / server / app / site / scripts / .github)
-태경    : 제품 방향·승인·외부 결정(코드 서명·과금·배포)
+태경    : 제품 방향·승인·실제 장비 검증·외부 결정(코드 서명은 v3 로 연기)
 ```
 
-분담이 없어졌으므로 파일 충돌 방지 규칙(작업 전 fetch, 공유 파일 명시)은
-더 이상 필수가 아니다. 다만 **CI 실패는 여전히 최우선 수정**이다.
+## 상태 파일 규칙 (v0.19 에서 고정)
 
-## 상태 파일 위치 — 전 크레이트 완료 (2026-08-20)
+모든 상태는 `%LOCALAPPDATA%\APEX\Velox` 아래. 새 파일을 추가할 때는 반드시
+`paths::resolve` / `log_file` / `report_file` 을 쓴다. 맨 파일명을 쓰면
+v0.18 의 CWD 버그가 되살아난다.
 
-`velox_core::paths` 가 모든 상태 파일의 위치를 결정한다. CWD 저장은 전부 제거됐다.
-
-```text
-%LOCALAPPDATA%\APEX\Velox\
-├─ velox_policies.json      정책·동의
-├─ velox_models.json        모델 ID
-├─ velox_providers.json     커스텀 provider
-├─ velox_ledger.json        사용량 장부
-├─ velox_pricing.json       단가표
-├─ velox_checkpoints.txt    체크포인트
-├─ velox_profile.json       PC 프로필
-├─ velox_timeline.csv       성능 타임라인
-├─ logs\
-│  ├─ velox_daemon.log
-│  └─ velox_actions.log
-└─ reports\
-   └─ velox_baseline.json
-```
-
-- `VELOX_DATA_DIR` 로 위치를 강제할 수 있다(테스트·포터블 실행). 이 경우 레거시 이전은 하지 않는다.
-- CWD 에 남은 v0.18 이전 파일은 첫 실행 시 1회 자동 이전된다. 대상이 이미 있으면 덮어쓰지 않는다.
-- 새 파일을 추가할 때는 **반드시 `paths::resolve` / `log_file` / `report_file` 을 쓴다.**
-  맨 파일명을 쓰면 v0.18 의 버그가 되살아난다.
 ## 시작하지 않는 것
 
-v0.19 범위 밖(Safe Project Actions, Plugin SDK, 계정/동기화)은 시작하지 않는다.
+v0.20 범위 밖(플랫폼 전환·AEGIS·ATLAS·SDK)은 시작하지 않는다.
 보안 불변조건을 완화하지 않는다. push/tag/release 는 게이트 통과 후에만.

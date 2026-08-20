@@ -32,7 +32,7 @@ struct SignedDriver {
 }
 
 /// 하드웨어/OS 정보 (구조값 — 세션 사이 안정).
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct SystemInfo {
     pub cpu_model: String,
     pub logical_cores: usize,
@@ -42,7 +42,7 @@ pub struct SystemInfo {
 }
 
 /// 디스플레이(GPU) 드라이버 정보.
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct GpuInfo {
     pub name: String,
     pub driver_version: String,
@@ -50,14 +50,14 @@ pub struct GpuInfo {
 }
 
 /// 장치 드라이버 (이름, 버전).
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct DriverInfo {
     pub device: String,
     pub version: String,
 }
 
 /// 시스템 상태 스냅샷. 순수 데이터 — 포맷/표시는 호출자 몫.
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     // --- 순간값 (비교엔 무의미, 참고용) ---
     pub plan_guid: String,
@@ -200,7 +200,7 @@ fn drivers_from(signed: &[SignedDriver]) -> Vec<DriverInfo> {
 // ---------------- compare: 두 스냅샷의 구조 변화 ----------------
 
 /// 한 항목의 변화 (이전 → 이후).
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Change {
     pub item: String,
     pub old: String,
@@ -208,7 +208,7 @@ pub struct Change {
 }
 
 /// 두 스냅샷의 차이. **구조값만** 본다 — 순간값(cpu_usage/온도)은 노이즈라 무시.
-#[derive(Serialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq, Eq)]
 pub struct SnapshotDiff {
     pub changed: Vec<Change>,
     pub added: Vec<String>,

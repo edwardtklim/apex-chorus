@@ -11,6 +11,7 @@ mod fps;
 mod fpscheck;
 mod gpu;
 mod project;
+mod report;
 mod snapshot;
 mod tempcheck;
 mod thermals;
@@ -131,6 +132,46 @@ enum Commands {
     Project {
         #[command(subcommand)]
         action: ProjectCommands,
+    },
+    /// 수리 전/후를 측정하고 비교 리포트를 만든다
+    Report {
+        #[command(subcommand)]
+        action: ReportCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReportCommands {
+    /// 현재 상태를 측정해 파일로 저장 (수리 전/후에 각각 한 번씩)
+    Capture {
+        /// 라벨 (before / after 등)
+        #[arg(long, default_value = "before")]
+        label: String,
+        /// 저장할 파일 경로
+        #[arg(long)]
+        out: String,
+        /// CPU 점수도 함께 측정 (몇 초 더 걸림)
+        #[arg(long)]
+        bench: bool,
+    },
+    /// 두 측정을 비교해 수리 리포트 생성
+    Repair {
+        #[arg(long)]
+        before: String,
+        #[arg(long)]
+        after: String,
+        /// HTML 리포트를 저장할 경로
+        #[arg(long)]
+        out: Option<String>,
+        /// PC 이름 (리포트에 표시)
+        #[arg(long, default_value = "")]
+        machine: String,
+        /// 무엇을 작업했는지 메모
+        #[arg(long, default_value = "")]
+        note: String,
+        /// 사람이 읽는 요약 대신 JSON 출력
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -446,6 +487,17 @@ async fn main() {
             ProjectCommands::Analyze { path, objective } => {
                 project::analyze(&path, objective.as_deref()).await
             }
+        },
+        Commands::Report { action } => match action {
+            ReportCommands::Capture { label, out, bench } => report::capture(&label, &out, bench),
+            ReportCommands::Repair {
+                before,
+                after,
+                out,
+                machine,
+                note,
+                json,
+            } => report::repair(&before, &after, out.as_deref(), &machine, &note, json),
         },
     }
 }
