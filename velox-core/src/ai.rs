@@ -7,6 +7,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::env;
+use std::path::{Path, PathBuf};
 
 pub const PROVIDERS_FILE: &str = "velox_providers.json";
 pub const MODELS_FILE: &str = "velox_models.json";
@@ -74,7 +75,7 @@ pub const MAX_MODEL_ID_LEN: usize = 128;
 /// **파일만** 읽은 모델 구성(환경변수 오버라이드 없음). 파일이 없으면 기본값.
 /// 저장 시 기준값 — env 오버라이드를 파일에 굳혀 넣지 않기 위해 분리한다.
 fn load_models_file() -> ModelConfig {
-    std::fs::read_to_string(MODELS_FILE)
+    std::fs::read_to_string(crate::paths::resolve(MODELS_FILE))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
@@ -99,8 +100,10 @@ pub fn load_models() -> ModelConfig {
 }
 
 /// 원자적 파일 쓰기 — 임시 파일에 쓴 뒤 rename. 쓰다가 죽어도 원본이 깨지지 않는다.
-pub(crate) fn atomic_write(path: &str, contents: &str) -> std::io::Result<()> {
-    let tmp = format!("{path}.tmp");
+pub(crate) fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
     std::fs::write(&tmp, contents)?;
     std::fs::rename(&tmp, path)
 }
@@ -109,7 +112,7 @@ pub(crate) fn atomic_write(path: &str, contents: &str) -> std::io::Result<()> {
 pub fn save_models(m: &ModelConfig) -> bool {
     serde_json::to_string_pretty(m)
         .ok()
-        .and_then(|s| atomic_write(MODELS_FILE, &s).ok())
+        .and_then(|s| atomic_write(&crate::paths::resolve(MODELS_FILE), &s).ok())
         .is_some()
 }
 
@@ -455,7 +458,7 @@ pub struct ProviderConfig {
 }
 
 pub fn load_providers() -> Vec<ProviderConfig> {
-    std::fs::read_to_string(PROVIDERS_FILE)
+    std::fs::read_to_string(crate::paths::resolve(PROVIDERS_FILE))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
@@ -475,7 +478,7 @@ pub fn save_providers(ps: &[ProviderConfig]) -> bool {
         .collect();
     serde_json::to_string_pretty(&scrubbed)
         .ok()
-        .and_then(|s| std::fs::write(PROVIDERS_FILE, s).ok())
+        .and_then(|s| std::fs::write(crate::paths::resolve(PROVIDERS_FILE), s).ok())
         .is_some()
 }
 

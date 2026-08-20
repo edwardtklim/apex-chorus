@@ -7,6 +7,7 @@
 //! Phase 2 — AI 엔진: ai(provider 호출·라우팅).
 //! Phase 3 — 안전/액션 엔진: checkpoint(상태 저장·복원), action(화이트리스트 동작).
 //! Phase 5 — 데이터 스냅샷: snapshot(전원/CPU/온도 → 직렬화 가능한 데이터).
+//! Phase 6 — 실행 위치와 상태 분리: paths(LOCALAPPDATA/APEX/Velox).
 
 pub mod action;
 pub mod ai;
@@ -17,6 +18,7 @@ pub mod credentials;
 pub mod evidence;
 pub mod health;
 pub mod ledger;
+pub mod paths;
 pub mod policy;
 pub mod pricing;
 pub mod privacy;

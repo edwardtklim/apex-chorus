@@ -45,7 +45,11 @@ pub fn save_silent() -> bool {
     if guid.is_empty() {
         return false;
     }
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(FILE) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(crate::paths::resolve(FILE))
+    {
         let _ = writeln!(f, "{}|power_plan|{}|{}", now_secs(), guid, label);
         return true;
     }
@@ -54,7 +58,7 @@ pub fn save_silent() -> bool {
 
 /// 저장된 체크포인트 줄 목록.
 pub fn entries() -> Vec<String> {
-    std::fs::read_to_string(FILE)
+    std::fs::read_to_string(crate::paths::resolve(FILE))
         .map(|s| {
             s.lines()
                 .map(|l| l.to_string())

@@ -156,13 +156,10 @@ fn load_from(path: &Path) -> Ledger {
 
 /// 원장 로드. 없거나 **손상되면 기본값**(빈 기록) — 손상 파일로 오동작하지 않는다.
 pub fn load() -> Ledger {
-    load_from(Path::new(LEDGER_FILE))
+    load_from(&crate::paths::resolve(LEDGER_FILE))
 }
 
 fn save_to(path: &Path, ledger: &Ledger) -> bool {
-    let Some(path) = path.to_str() else {
-        return false;
-    };
     serde_json::to_string_pretty(ledger)
         .ok()
         .and_then(|s| crate::ai::atomic_write(path, &s).ok())
@@ -173,7 +170,7 @@ fn save_to(path: &Path, ledger: &Ledger) -> bool {
 ///
 /// 단독 저장은 기존 API 호환용이다. 읽기-수정-쓰기 동작은 아래 잠금 경로를 사용해야 한다.
 pub fn save(ledger: &Ledger) -> bool {
-    save_to(Path::new(LEDGER_FILE), ledger)
+    save_to(&crate::paths::resolve(LEDGER_FILE), ledger)
 }
 
 struct LedgerFileLock {
@@ -274,7 +271,7 @@ pub fn record(
     usage: Option<TokenUsage>,
 ) {
     let _ = record_to(
-        Path::new(LEDGER_FILE),
+        &crate::paths::resolve(LEDGER_FILE),
         feature,
         provider,
         model,
@@ -323,7 +320,7 @@ fn record_to(
 
 /// 모든 기록 삭제(설정은 유지). 삭제된 건수를 반환.
 pub fn clear() -> usize {
-    let path = Path::new(LEDGER_FILE);
+    let path = &crate::paths::resolve(LEDGER_FILE);
     let _process_lock = acquire_process_lock();
     let Ok(_lock) = acquire_lock(path) else {
         return 0;
@@ -338,7 +335,7 @@ pub fn clear() -> usize {
 
 /// 기록 on/off.
 pub fn set_enabled(enabled: bool) -> bool {
-    let path = Path::new(LEDGER_FILE);
+    let path = &crate::paths::resolve(LEDGER_FILE);
     let _process_lock = acquire_process_lock();
     let Ok(_lock) = acquire_lock(path) else {
         return false;
@@ -351,7 +348,7 @@ pub fn set_enabled(enabled: bool) -> bool {
 
 /// 보존 기간(일) 설정. 0 = 무기한.
 pub fn set_retention_days(days: u32) -> bool {
-    let path = Path::new(LEDGER_FILE);
+    let path = &crate::paths::resolve(LEDGER_FILE);
     let _process_lock = acquire_process_lock();
     let Ok(_lock) = acquire_lock(path) else {
         return false;

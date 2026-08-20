@@ -116,7 +116,7 @@ fn days_from_civil((y, m, d): (i64, u32, u32)) -> i64 {
 
 /// 단가표 로드. 없거나 손상되면 **빈 표**(= 비용 unknown) — permissive 추정 금지.
 pub fn load() -> PricingTable {
-    std::fs::read_to_string(PRICING_FILE)
+    std::fs::read_to_string(crate::paths::resolve(PRICING_FILE))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
@@ -126,7 +126,7 @@ pub fn load() -> PricingTable {
 pub fn save(table: &PricingTable) -> bool {
     serde_json::to_string_pretty(table)
         .ok()
-        .and_then(|s| crate::ai::atomic_write(PRICING_FILE, &s).ok())
+        .and_then(|s| crate::ai::atomic_write(&crate::paths::resolve(PRICING_FILE), &s).ok())
         .is_some()
 }
 

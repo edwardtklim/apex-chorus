@@ -96,7 +96,7 @@ pub type PolicyStore = BTreeMap<String, AgentPolicy>;
 
 /// 정책 파일 로드. 없거나 **손상되면 빈 맵**(= 모든 provider deny) — permissive 폴백 금지.
 pub fn load_policies() -> PolicyStore {
-    match std::fs::read_to_string(POLICIES_FILE) {
+    match std::fs::read_to_string(crate::paths::resolve(POLICIES_FILE)) {
         // 파싱 실패(손상/미지 토큰)는 빈 맵으로 — 안전한 deny 기본으로 닫는다.
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
         Err(_) => PolicyStore::new(),
@@ -107,7 +107,7 @@ pub fn load_policies() -> PolicyStore {
 pub fn save_policies(store: &PolicyStore) -> bool {
     serde_json::to_string_pretty(store)
         .ok()
-        .and_then(|s| crate::ai::atomic_write(POLICIES_FILE, &s).ok())
+        .and_then(|s| crate::ai::atomic_write(&crate::paths::resolve(POLICIES_FILE), &s).ok())
         .is_some()
 }
 

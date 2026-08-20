@@ -5,31 +5,50 @@
 
 ## 0. 현재 기준점
 
+*(2026-08-19 갱신 — 미국 새 데스크톱으로 이주 후 실측)*
+
 - 기준 브랜치: `main`
-- 현재 HEAD: `3f916a0`
-- 원격 `origin/main`: `48d81e9`
-- 로컬 `main`: 원격보다 4커밋 앞섬
-- Workspace package version: `0.14.0`
-- 개발 중인 다음 버전: `0.15.0`
-- 현재 배포/태그 금지: v0.15는 아직 완성되지 않음
+- 현재 HEAD: `5b06f3f` (`chore(v0.18): align workspace version and roadmap`)
+- 원격 `origin/main`: `5b06f3f` — **동기 상태, 미푸시 커밋 0**
+- Workspace package version: `0.18.0`
+- 개발 중인 다음 버전: `0.19.0` (Product Hardening)
+- 게시된 GitHub Release: **v0.15.0 · v0.16.0 · v0.18.0(Latest)**
+  - `v0.17.0` 태그는 만들지 않는다 — workspace version 이 0.16.0 에서 0.18.0 으로
+    직접 올라가 0.17.0 인 커밋이 저장소에 없다. v0.17 Local Usage Ledger 는
+    v0.18.0 릴리스에 포함해 배포했다.
+- 기존 태그: v0.5.0 ~ v0.9.0, v0.15.0, v0.16.0, v0.18.0
 
-현재 로컬 커밋:
-
-```text
-487f7c5 v0.14 — secure app bridge and unified product core
-aa1b4da v0.15 Step A+B — configurable models + CLI model management
-a331c23 v0.15 Step C — provider Agent Policy gateway
-3f916a0 v0.15 Step C.5 — representative AI paths routed through policy
-```
-
-검증 상태:
+코드 규모:
 
 ```text
-cargo test --workspace       PASS (40 tests at 3f916a0)
-cargo clippy --workspace --all-targets -- -D warnings
-                             PASS
-working tree                 clean
+velox-core     17 모듈  5,894줄   엔진(데이터·정책·판단·안전)
+velox-cli      24 파일  4,330줄   터미널 인터페이스
+velox-server    1 파일    730줄   인증된 localhost HTTP/SSE (라우트 24개)
+velox-app       1 파일    115줄   wry+tao 네이티브 창
+site/index.html          585줄   사이트 = 앱 (권한만 다름)
 ```
+
+검증 상태 (2026-08-19, Windows 11 26200):
+
+```text
+cargo test --workspace --locked                                  PASS (109 tests)
+cargo fmt --all -- --check                                       PASS
+cargo clippy --workspace --all-targets --all-features --locked    PASS (-D warnings)
+cargo build --workspace --release --locked                       PASS
+scripts/Test-ReleaseSafety.ps1                                   PASS
+scripts/Test-UsageApi.ps1                                        PASS
+scripts/Test-ProjectApi.ps1                                      PASS
+working tree                                                     clean
+```
+
+### 개발 환경 주의사항 (새 PC 이주에서 확인)
+
+- **Smart App Control(SAC)** 이 켜져 있으면 서명 안 된 자체 빌드 산출물이 차단되어
+  `cargo test` 가 `os error 4551` 로 실패한다. CodeIntegrity 로그에 이벤트 3077/3118 이 남는다.
+  개발 머신에서는 SAC 를 끄는 수밖에 없다(끄면 재설치 전까지 복구 불가).
+  **이는 코드 서명이 v0.19 필수 항목인 이유를 그대로 보여준다** — 사용자 PC 에서도 같은 일이 일어난다.
+- MSVC Build Tools(VCTools 워크로드)가 없으면 링커 에러로 빌드 자체가 실패한다.
+- CI 스크립트는 `pwsh`(PowerShell 7)를 요구한다.
 
 ## 1. 제품 정의
 
@@ -771,7 +790,7 @@ Provider마다 HTTP 응답 파싱을 `ai.rs` 한 함수에 계속 쌓지 않는�
 └─ logs/
 ```
 
-- 실행 위치에 상태 파일 저장 금지
+- 실행 위치에 상태 파일 저장 금지 — **velox-core 완료(`paths` 모듈). CLI/server 잔여분은 문서 끝 참고**
 - config schema version
 - migration
 - atomic save
@@ -1066,19 +1085,49 @@ push/tag/release status:
 
 # 최우선 다음 작업
 
-Claude는 아래 순서만 따른다.
+*(2026-08-19 갱신 — v0.15~v0.18 은 전부 완료·게시됨)*
+
+현재 위치: **v0.19.0 Product Hardening**. 목표는 "개발자 머신이 아닌 새 Windows PC에서
+설치하고 쓸 수 있는 품질"이다. 아래 순서만 따른다.
 
 ```text
-1. v0.15 Step C.6 — Pulse consent + 남은 Policy 우회 제거
-2. EvidenceBundle 및 builders
-3. v0.15 Step D — read-only Council Core
-4. Council tests
-5. Pulse Council SSE/UI
-6. 모든 AI 호출 경로 audit
-7. v0.15.0 version bump
-8. README/status 갱신
-9. release candidate 검증
-10. 사용자 승인 후 push/tag/release
+1. [완료] Config 위치 분리 — 상태 파일을 실행 위치(CWD)에서 분리
+          velox-core::paths → %LOCALAPPDATA%\APEX\Velox (VELOX_DATA_DIR 로 override)
+          레거시 파일 자동 이전 포함
+2. Logging — tracing 도입, key/prompt/serial 레닥션, 회전 로그
+3. Error UX — 모든 실패가 "다음 행동"을 안내
+4. Installer/Updater — 실제 인스톨러, 바로가기, checksum 검증, rollback
+5. 코드 서명 계획 확정  ← 태경 결정 사항(비용·본인확인)
+6. v0.19 RC 검증(깨끗한 VM 설치·uninstall·secret scan) → 태그 → 릴리스
 ```
 
-지금은 v0.16 Project Intelligence, 파일 쓰기, Plugin SDK를 시작하지 않는다.
+## 2인 엔지니어 분담 (2026-07-31 체계)
+
+```text
+Claude : velox-core  — 데이터 모델·AI 실행 경로·정책·성능
+GPT    : velox-cli / velox-server / velox-app / site / .github / scripts
+태경    : 제품 방향·승인·외부 결정(서명·과금)
+```
+
+작업 전 `git fetch` + `pull --ff-only`. 공유 파일(lib.rs / Cargo.toml / Cargo.lock / README)
+변경 시 커밋 메시지에 명시. **CI 실패는 최우선 수정.**
+
+## GPT 담당으로 남은 CWD 상태 파일
+
+velox-core 쪽은 `paths` 로 전부 이전했다. 아래는 CLI/server 소유라 손대지 않았다 —
+같은 방식으로 `velox_core::paths::resolve()` 를 쓰면 된다.
+
+```text
+velox-cli/src/daemon.rs    velox_daemon.log
+velox-cli/src/diagnose.rs  velox_actions.log
+velox-cli/src/timeline.rs  velox_timeline.csv
+velox-server/src/main.rs   velox_baseline.json · velox_profile.json
+```
+
+로그는 `%LOCALAPPDATA%\APEX\Velox\logs\`, 리포트는 `reports\` 로 가는 게
+v0.19 Config 설계와 맞는다.
+
+## 시작하지 않는 것
+
+v0.19 범위 밖(Safe Project Actions, Plugin SDK, 계정/동기화)은 시작하지 않는다.
+보안 불변조건을 완화하지 않는다. push/tag/release 는 게이트 통과 후에만.
