@@ -20,6 +20,7 @@ pub mod guidance;
 pub mod health;
 pub mod ledger;
 pub mod logging;
+pub mod metrics;
 pub mod paths;
 pub mod policy;
 pub mod pricing;

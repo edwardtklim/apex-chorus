@@ -10,6 +10,7 @@ mod drivers;
 mod fps;
 mod fpscheck;
 mod gpu;
+mod metrics;
 mod project;
 mod report;
 mod snapshot;
@@ -138,6 +139,29 @@ enum Commands {
         #[command(subcommand)]
         action: ReportCommands,
     },
+    /// Closed Alpha 지표 — 로컬에만 쌓이며 어디로도 전송되지 않습니다
+    Metrics {
+        #[command(subcommand)]
+        action: MetricsCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum MetricsCommands {
+    /// 지금까지 쌓인 지표 요약
+    Summary {
+        #[arg(long)]
+        json: bool,
+    },
+    /// 지표를 파일로 내보내기 (개발자에게 보낼 때)
+    Export {
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// 지표 전부 삭제
+    Clear,
+    /// 방금 본 경고가 틀렸다고 표시 (사람이 판단하는 지표)
+    FalseWarning,
 }
 
 #[derive(Subcommand)]
@@ -364,6 +388,7 @@ async fn main() {
     // 로그는 파일에만 남는다(터미널은 조용히). 가드를 main 끝까지 살려 flush 보장.
     let _log_guard = velox_core::logging::init();
     tracing::debug!(target: "velox::cli", "cli start");
+    velox_core::metrics::record_start();
     dotenv().ok();
     let cli = Cli::parse();
 
@@ -499,7 +524,16 @@ async fn main() {
                 json,
             } => report::repair(&before, &after, out.as_deref(), &machine, &note, json),
         },
+        Commands::Metrics { action } => match action {
+            MetricsCommands::Summary { json } => metrics::summary(json),
+            MetricsCommands::Export { out } => metrics::export(out.as_deref()),
+            MetricsCommands::Clear => metrics::clear(),
+            MetricsCommands::FalseWarning => metrics::false_warning(),
+        },
     }
+
+    // 여기까지 왔으면 정상 종료다. 표식을 지워 다음 실행이 crash 로 세지 않게 한다.
+    velox_core::metrics::record_clean_exit();
 }
 
 fn run_info() {

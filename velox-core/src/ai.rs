@@ -100,6 +100,11 @@ pub fn load_models() -> ModelConfig {
 }
 
 /// 원자적 파일 쓰기 — 임시 파일에 쓴 뒤 rename. 쓰다가 죽어도 원본이 깨지지 않는다.
+/// 원자적 쓰기의 공개 래퍼 — metrics 등 다른 모듈이 쓴다.
+pub fn atomic_write_public(path: &Path, contents: &str) -> std::io::Result<()> {
+    atomic_write(path, contents)
+}
+
 pub(crate) fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");

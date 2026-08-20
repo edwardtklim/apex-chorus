@@ -57,7 +57,9 @@ pub async fn gated_text(
     match execute_agent(req).await {
         Ok(r) => Some(r.text),
         // 정책 실패는 전부 guidance 를 거쳐 "다음 행동"까지 함께 보여준다.
+        // 동시에 거부 사유를 알파 지표로 센다(고정 라벨만 — provider 이름은 넘기지 않는다).
         Err(PolicyError::CloudNotAllowed(p)) => {
+            velox_core::metrics::record_policy_denial("consent_missing");
             println!(
                 "{}",
                 velox_core::guidance::Problem::ConsentMissing {
@@ -70,6 +72,7 @@ pub async fn gated_text(
             None
         }
         Err(PolicyError::ScopeExceeded { requested, max }) => {
+            velox_core::metrics::record_policy_denial("scope_exceeded");
             println!(
                 "{}",
                 velox_core::guidance::Problem::ScopeTooLow {
@@ -83,6 +86,12 @@ pub async fn gated_text(
             None
         }
         Err(e) => {
+            velox_core::metrics::record_policy_denial(match &e {
+                PolicyError::UnknownProvider(_) => "unknown_provider",
+                PolicyError::ToolNotAllowed(_) => "tool_not_allowed",
+                PolicyError::ProviderCallFailed(_) => "provider_call_failed",
+                _ => "other",
+            });
             let problem: velox_core::guidance::Problem = (&e).into();
             println!("{}", problem.guidance().render_plain());
             None

@@ -18,8 +18,11 @@ use velox_core::report::{ReportMeta, SessionMeasurement};
 /// 현재 상태를 측정해 파일로 저장한다.
 pub fn capture(label: &str, out: &str, run_bench: bool) {
     println!("측정 중... ({label})");
+    let started = std::time::Instant::now();
 
     let snap = velox_core::snapshot::Snapshot::collect();
+    // 센서 미지원률은 알파에서 제일 궁금한 숫자 중 하나다 — 시도할 때마다 센다.
+    velox_core::metrics::record_sensor(snap.max_temp_c.is_some());
     let (single, multi) = if run_bench {
         println!("  CPU 벤치 실행 중 (몇 초 걸립니다)");
         let (s, m) = crate::bench::quick_score();
@@ -51,18 +54,35 @@ pub fn capture(label: &str, out: &str, run_bench: bool) {
         max_temp_c: temp,
     };
 
-    match serde_json::to_string_pretty(&m) {
+    let ms = started.elapsed().as_millis() as u64;
+    let ok = match serde_json::to_string_pretty(&m) {
         Ok(json) => match std::fs::write(out, json) {
             Ok(_) => {
                 println!("✓ 저장: {out}");
                 if !run_bench {
                     println!("  (--bench 를 주면 CPU 점수도 함께 측정합니다)");
                 }
+                true
             }
-            Err(e) => eprintln!("✗ 저장 실패 ({out}): {e}"),
+            Err(e) => {
+                eprintln!("✗ 저장 실패 ({out}): {e}");
+                false
+            }
         },
-        Err(e) => eprintln!("✗ 직렬화 실패: {e}"),
-    }
+        Err(e) => {
+            eprintln!("✗ 직렬화 실패: {e}");
+            false
+        }
+    };
+    velox_core::metrics::record_operation(
+        "repair_capture",
+        if ok {
+            velox_core::metrics::OperationOutcome::Completed
+        } else {
+            velox_core::metrics::OperationOutcome::Failed
+        },
+        ms,
+    );
 }
 
 fn load(path: &str) -> Option<SessionMeasurement> {

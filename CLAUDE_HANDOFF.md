@@ -1113,8 +1113,8 @@ push/tag/release status:
 ```text
 1. [완료] Repair Report — velox-core::report + velox report capture/repair
           결정론적 판정(AI 없음) · 기준 명시 · Unknown 정직 처리 · 자체완결 HTML
-2. Alpha 지표 수집 — 실행 성공률·완료율·소요시간·취소율·센서 미지원률
-                     ·policy 거부 사유·crash·잘못된 경고. 전부 로컬, 업로드 없음
+2. [완료] Alpha 지표 — velox-core::metrics + velox metrics summary/export/clear/false-warning
+          crash 는 세션 표식으로 감지. 전부 로컬, 업로드 코드 없음
 3. 실제 장비 검증  ← 태경만 할 수 있음
    - 최소 2대의 서로 다른 PC에서 전체 흐름 완료
    - 사용자 1명이 개발자 도움 없이 실행
