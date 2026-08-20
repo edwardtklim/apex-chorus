@@ -105,6 +105,7 @@
     <button class="tab" data-room="benchmark" onclick="showRoom('benchmark')">Benchmark</button>
     <button class="tab" data-room="snapshot" onclick="showRoom('snapshot')">Snapshot</button>
     <button class="tab" data-room="project" onclick="showRoom('project')">Project</button>
+    <button class="tab" data-room="repair" onclick="showRoom('repair')">Repair</button>
     <button class="tab" data-room="ultra" onclick="showRoom('ultra')">Velox Ultra</button>
     <button class="tab" data-room="settings" onclick="showRoom('settings')">Settings</button>
   </div>
@@ -183,6 +184,40 @@
     <p class="muted" style="font-size:12px;margin:8px 0 18px">절대경로와 비밀 파일은 결과에서 제외됩니다 · 명령 실행 없음 · 파일 변경 없음 · 클라우드 전송 없음</p>
     <div id="project-status" class="muted" style="font-size:13px;min-height:18px"></div>
     <div class="grid" id="project-result"></div>
+  </section>
+
+  <section class="room" id="room-repair">
+    <h2>Repair</h2>
+    <p class="rsub">수리 전후를 측정해서 무엇이 실제로 나아졌는지 비교합니다. 판정은 전부 측정값 기준이고 AI는 관여하지 않습니다.</p>
+
+    <div class="warn">순서: ① 작업 전에 <b>수리 전</b> 측정 → ② 재조립·드라이버 갱신 등 작업 → ③ <b>수리 후</b> 측정 → ④ 리포트 생성</div>
+
+    <h3 style="font-size:14px;margin:22px 0 8px">① 측정</h3>
+    <div class="btnrow" style="align-items:stretch">
+      <input id="rp-label" placeholder="라벨 (예: before, after)" style="flex:1;min-width:200px;padding:10px 12px;border:.5px solid var(--line);border-radius:10px;background:transparent;color:var(--fg)">
+      <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap">
+        <input type="checkbox" id="rp-bench" checked> CPU 점수도 측정
+      </label>
+      <button class="btn" id="rp-capture-btn" onclick="repairCapture()">측정 시작</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">CPU 점수 측정은 몇 초 걸립니다 · 온도 센서는 관리자 권한이나 보드 지원이 없으면 읽히지 않습니다(정상)</p>
+    <div id="rp-capture-status" class="muted" style="font-size:13px;min-height:18px;margin-top:8px"></div>
+
+    <h3 style="font-size:14px;margin:26px 0 8px">② 저장된 측정</h3>
+    <div id="rp-list" class="muted" style="font-size:13px">…</div>
+
+    <h3 style="font-size:14px;margin:26px 0 8px">③ 리포트 생성</h3>
+    <div class="btnrow" style="align-items:stretch;flex-wrap:wrap">
+      <select id="rp-before" style="min-width:150px;padding:10px 12px;border:.5px solid var(--line);border-radius:10px;background:transparent;color:var(--fg)"></select>
+      <span class="muted" style="align-self:center">→</span>
+      <select id="rp-after" style="min-width:150px;padding:10px 12px;border:.5px solid var(--line);border-radius:10px;background:transparent;color:var(--fg)"></select>
+    </div>
+    <div class="btnrow" style="align-items:stretch;margin-top:10px;flex-wrap:wrap">
+      <input id="rp-machine" placeholder="PC 이름 (예: 친구 데스크탑)" style="flex:1;min-width:180px;padding:10px 12px;border:.5px solid var(--line);border-radius:10px;background:transparent;color:var(--fg)">
+      <input id="rp-note" placeholder="무엇을 했는지 (예: 써멀 재도포)" style="flex:2;min-width:220px;padding:10px 12px;border:.5px solid var(--line);border-radius:10px;background:transparent;color:var(--fg)">
+      <button class="btn" id="rp-build-btn" onclick="repairBuild()">리포트 만들기</button>
+    </div>
+    <div id="rp-report" style="margin-top:18px"></div>
   </section>
 
   <section class="room" id="room-ultra">
@@ -294,6 +329,97 @@ function showRoom(r){
   var tabs=document.querySelectorAll('.tab'); for(var k=0;k<tabs.length;k++){ tabs[k].classList.toggle('active', tabs[k].getAttribute('data-room')===r); }
   if(r==='overview') refreshLive();
   if(r==='settings'){ renderHub(); renderUsage(); }
+  if(r==='repair') loadCaptures();
+}
+
+// ---------------- Repair (v0.20) ----------------
+// 판정 문구는 서버(velox-core::report)가 만든다. UI 는 표시만 한다.
+
+function loadCaptures(){
+  fetch('/repair/captures').then(j).then(function(d){
+    var list=d.captures||[];
+    var box=document.getElementById('rp-list');
+    var b=document.getElementById('rp-before'), a=document.getElementById('rp-after');
+    if(!list.length){
+      box.textContent='아직 측정이 없습니다. 위에서 먼저 측정하세요.';
+      b.innerHTML=''; a.innerHTML=''; return;
+    }
+    var rows='<table style="width:100%;border-collapse:collapse;font-size:13px">';
+    rows+='<tr class="muted"><th style="text-align:left;padding:4px 6px">라벨</th><th style="text-align:left;padding:4px 6px">측정 시각</th><th style="text-align:left;padding:4px 6px">CPU 점수</th></tr>';
+    var opts='';
+    for(var i=0;i<list.length;i++){
+      var c=list[i];
+      rows+='<tr><td style="padding:4px 6px"><b>'+esc(c.label)+'</b></td><td style="padding:4px 6px">'+esc(c.captured_at)+'</td><td style="padding:4px 6px">'+(c.has_bench?'있음':'없음')+'</td></tr>';
+      opts+='<option value="'+esc(c.label)+'">'+esc(c.label)+'</option>';
+    }
+    box.innerHTML=rows+'</table>';
+    b.innerHTML=opts; a.innerHTML=opts;
+    // 기본값: 가장 오래된 것 → 가장 최근 것
+    if(list.length>1){ b.selectedIndex=0; a.selectedIndex=list.length-1; }
+  }).catch(function(){ document.getElementById('rp-list').textContent='목록을 불러오지 못했습니다.'; });
+}
+
+function repairCapture(){
+  var label=(document.getElementById('rp-label').value||'').trim();
+  var bench=document.getElementById('rp-bench').checked;
+  var st=document.getElementById('rp-capture-status');
+  var btn=document.getElementById('rp-capture-btn');
+  if(!label){ st.textContent='라벨을 입력하세요 (예: before).'; return; }
+  btn.disabled=true;
+  st.textContent = bench ? '측정 중… CPU 점수를 재는 동안 몇 초 걸립니다.' : '측정 중…';
+  fetch('/repair/capture',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({label:label,bench:bench})}).then(j).then(function(d){
+    btn.disabled=false;
+    if(d.error){ st.textContent='✗ '+(d.message||d.error); return; }
+    var msg='✓ ['+d.label+'] 저장됨';
+    if(d.cpu_single!=null) msg+=' · 싱글 '+Math.round(d.cpu_single)+' / 멀티 '+Math.round(d.cpu_multi);
+    // 센서 미지원은 흔한 정상 상황이라 실패처럼 보이지 않게 안내한다.
+    if(!d.temp_available) msg+=' · 온도 센서는 읽지 못함(관리자 권한/보드 미지원 — 정상입니다)';
+    st.textContent=msg;
+    document.getElementById('rp-label').value='';
+    loadCaptures();
+  }).catch(function(){ btn.disabled=false; st.textContent='✗ 측정에 실패했습니다.'; });
+}
+
+function repairBuild(){
+  var before=document.getElementById('rp-before').value;
+  var after=document.getElementById('rp-after').value;
+  var out=document.getElementById('rp-report');
+  var btn=document.getElementById('rp-build-btn');
+  if(!before||!after){ out.innerHTML='<p class="muted">측정을 두 개 이상 만든 뒤 선택하세요.</p>'; return; }
+  btn.disabled=true;
+  out.innerHTML='<p class="muted">리포트 생성 중…</p>';
+  fetch('/repair/build',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({before:before,after:after,
+      machine:document.getElementById('rp-machine').value||'',
+      note:document.getElementById('rp-note').value||''})}).then(j).then(function(d){
+    btn.disabled=false;
+    if(d.error){ out.innerHTML='<p class="warn">'+esc(d.message||d.error)+'</p>'; return; }
+    var r=d.report, h='';
+    var pass=0,fail=0,unk=0;
+    for(var i=0;i<r.verdicts.length;i++){
+      var o=r.verdicts[i].outcome;
+      if(o==='pass')pass++; else if(o==='fail')fail++; else unk++;
+    }
+    h+='<div style="display:flex;gap:22px;margin-bottom:14px">';
+    h+='<div><div style="font-size:22px;font-weight:700">'+pass+'</div><div class="muted" style="font-size:11px">개선</div></div>';
+    h+='<div><div style="font-size:22px;font-weight:700">'+fail+'</div><div class="muted" style="font-size:11px">악화</div></div>';
+    h+='<div><div style="font-size:22px;font-weight:700">'+unk+'</div><div class="muted" style="font-size:11px">측정 불가</div></div>';
+    h+='</div>';
+    for(var c=0;c<r.caveats.length;c++) h+='<div class="warn">'+esc(r.caveats[c])+'</div>';
+    h+='<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:10px">';
+    for(var v=0;v<r.verdicts.length;v++){
+      var d2=r.verdicts[v];
+      var lab = d2.outcome==='pass'?'개선':(d2.outcome==='fail'?'악화':'측정 불가');
+      h+='<tr style="border-bottom:.5px solid var(--line)"><td style="padding:8px 6px;vertical-align:top"><b>'+esc(d2.name)+'</b><div class="muted" style="font-size:11px;margin-top:2px">'+esc(d2.criterion)+'</div></td>';
+      h+='<td style="padding:8px 6px;vertical-align:top">'+esc(d2.measured)+'</td>';
+      h+='<td style="padding:8px 6px;vertical-align:top;white-space:nowrap">'+lab+'</td></tr>';
+    }
+    h+='</table>';
+    if(d.html_saved) h+='<p class="muted" style="font-size:12px;margin-top:12px">공유용 HTML 리포트가 저장되었습니다:<br><code>'+esc(d.html_path)+'</code></p>';
+    h+='<p class="muted" style="font-size:11px;margin-top:6px">benchmark version '+esc(r.meta.benchmark_version)+' · 같은 버전끼리만 비교할 수 있습니다. 측정 불가는 실패가 아니라 재지 못했다는 뜻입니다.</p>';
+    out.innerHTML=h;
+  }).catch(function(){ btn.disabled=false; out.innerHTML='<p class="warn">리포트 생성에 실패했습니다.</p>'; });
 }
 
 function refreshLive(){

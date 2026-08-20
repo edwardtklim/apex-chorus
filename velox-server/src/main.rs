@@ -67,6 +67,9 @@ async fn main() {
         .route("/profile", get(get_profile).post(save_profile))
         .route("/snapshot/save", post(save_baseline))
         .route("/snapshot/compare", get(compare_baseline))
+        .route("/repair/captures", get(repair_captures))
+        .route("/repair/capture", post(repair_capture))
+        .route("/repair/build", post(repair_build))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             require_session,
@@ -183,6 +186,170 @@ fn project_api_error(
         status,
         Json(serde_json::json!({ "error": { "code": code, "message": message } })),
     )
+}
+
+// ---------------- 수리 워크플로 (v0.20) ----------------
+//
+// 측정 파일은 reports\repair_<label>.json 에 쌓인다. 라벨은 파일명이 되므로
+// 경로 문자를 막는다 — UI 에서 온 문자열을 그대로 파일명에 쓰지 않는다.
+
+fn safe_label(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() || s.len() > 40 {
+        return None;
+    }
+    if s.chars()
+        .any(|c| !(c.is_alphanumeric() || c == '-' || c == '_'))
+    {
+        return None;
+    }
+    Some(s.to_string())
+}
+
+fn capture_path(label: &str) -> std::path::PathBuf {
+    velox_core::paths::report_file(&format!("repair_{label}.json"))
+}
+
+#[derive(Deserialize)]
+struct CaptureReq {
+    label: String,
+    /// CPU 점수도 함께 측정할지. 몇 초 더 걸린다.
+    #[serde(default)]
+    bench: bool,
+}
+
+/// 지금 상태를 측정해 저장한다(수리 전/후에 각각 한 번).
+async fn repair_capture(Json(req): Json<CaptureReq>) -> Json<serde_json::Value> {
+    let Some(label) = safe_label(&req.label) else {
+        return Json(serde_json::json!({
+            "error": "invalid_label",
+            "message": "라벨은 영문·숫자·- _ 만, 40자 이내로 지정하세요."
+        }));
+    };
+
+    let bench = req.bench;
+    let measurement = tokio::task::spawn_blocking(move || {
+        let snap = Snapshot::collect();
+        let (single, multi) = if bench {
+            let r = velox_core::benchmark::CpuBenchmarkReport::run();
+            (Some(r.single_score), Some(r.multi_score))
+        } else {
+            (None, None)
+        };
+        velox_core::report::SessionMeasurement {
+            label: label.clone(),
+            captured_at: velox_core::report::ReportMeta::new("", "").generated_at,
+            max_temp_c: snap.max_temp_c,
+            snapshot: snap,
+            cpu_single: single,
+            cpu_multi: multi,
+            sustain_ratio: None,
+        }
+    })
+    .await;
+
+    let Ok(m) = measurement else {
+        return Json(serde_json::json!({ "error": "capture_failed" }));
+    };
+
+    let path = capture_path(&m.label);
+    let written = serde_json::to_string_pretty(&m)
+        .ok()
+        .and_then(|s| std::fs::write(&path, s).ok())
+        .is_some();
+
+    Json(serde_json::json!({
+        "saved": written,
+        "label": m.label,
+        "captured_at": m.captured_at,
+        "cpu_single": m.cpu_single,
+        "cpu_multi": m.cpu_multi,
+        // 센서 미지원은 흔하다 — UI 가 "실패"로 보여주지 않도록 별도로 알린다.
+        "temp_available": m.max_temp_c.is_some(),
+    }))
+}
+
+/// 저장된 측정 목록.
+async fn repair_captures() -> Json<serde_json::Value> {
+    let dir = velox_core::paths::reports_dir();
+    let mut items: Vec<serde_json::Value> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let label = name.strip_prefix("repair_")?.strip_suffix(".json")?;
+            let text = std::fs::read_to_string(e.path()).ok()?;
+            let m: velox_core::report::SessionMeasurement = serde_json::from_str(&text).ok()?;
+            Some(serde_json::json!({
+                "label": label,
+                "captured_at": m.captured_at,
+                "has_bench": m.cpu_single.is_some(),
+                "cpu": m.snapshot.system.cpu_model,
+            }))
+        })
+        .collect();
+    items.sort_by(|a, b| {
+        a["captured_at"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["captured_at"].as_str().unwrap_or(""))
+    });
+    Json(serde_json::json!({ "captures": items }))
+}
+
+#[derive(Deserialize)]
+struct BuildReq {
+    before: String,
+    after: String,
+    #[serde(default)]
+    machine: String,
+    #[serde(default)]
+    note: String,
+}
+
+/// 두 측정을 비교해 리포트를 만들고 HTML 을 저장한다.
+async fn repair_build(Json(req): Json<BuildReq>) -> Json<serde_json::Value> {
+    let (Some(b), Some(a)) = (safe_label(&req.before), safe_label(&req.after)) else {
+        return Json(serde_json::json!({ "error": "invalid_label" }));
+    };
+    if b == a {
+        return Json(serde_json::json!({
+            "error": "same_capture",
+            "message": "수리 전과 후는 서로 다른 측정이어야 합니다."
+        }));
+    }
+
+    let load = |label: &str| -> Option<velox_core::report::SessionMeasurement> {
+        std::fs::read_to_string(capture_path(label))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+    };
+    let (Some(before), Some(after)) = (load(&b), load(&a)) else {
+        return Json(serde_json::json!({
+            "error": "capture_missing",
+            "message": "선택한 측정 파일을 찾을 수 없습니다."
+        }));
+    };
+
+    // 사용자 입력은 HTML 로 렌더되므로 길이를 제한한다(이스케이프는 report 가 한다).
+    let machine: String = req.machine.chars().take(60).collect();
+    let note: String = req.note.chars().take(200).collect();
+
+    let report = velox_core::report::build(
+        velox_core::report::ReportMeta::new(machine, note),
+        before,
+        after,
+    );
+
+    let html_path = velox_core::paths::report_file(&format!("repair_{b}_to_{a}.html"));
+    let saved = std::fs::write(&html_path, report.to_html()).is_ok();
+
+    Json(serde_json::json!({
+        "report": report,
+        "html_saved": saved,
+        "html_path": html_path.to_string_lossy(),
+    }))
 }
 
 /// 현재 스냅샷을 기준(baseline)으로 저장한다.
