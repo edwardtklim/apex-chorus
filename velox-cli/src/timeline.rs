@@ -49,7 +49,7 @@ fn parse_line(l: &str) -> Option<Entry> {
 }
 
 fn load() -> Vec<Entry> {
-    std::fs::read_to_string(FILE)
+    std::fs::read_to_string(velox_core::paths::resolve(FILE))
         .map(|s| s.lines().filter_map(parse_line).collect())
         .unwrap_or_default()
 }
@@ -58,7 +58,11 @@ pub fn record() {
     println!("=== APEX Velox — timeline record ===\n");
     println!("빠른 벤치 측정 중...");
     let (single, multi) = crate::bench::quick_score();
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(FILE) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(velox_core::paths::resolve(FILE))
+    {
         let _ = writeln!(f, "{},{:.2},{:.2}", now(), single, multi);
     }
     println!(

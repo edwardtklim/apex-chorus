@@ -1091,7 +1091,7 @@ push/tag/release status:
 설치하고 쓸 수 있는 품질"이다. 아래 순서만 따른다.
 
 ```text
-1. [완료] Config 위치 분리 — 상태 파일을 실행 위치(CWD)에서 분리
+1. [완료] Config 위치 분리 — 전 크레이트 완료(core+cli+server). 문서 끝 참고
           velox-core::paths → %LOCALAPPDATA%\APEX\Velox (VELOX_DATA_DIR 로 override)
           레거시 파일 자동 이전 포함
 2. Logging — tracing 도입, key/prompt/serial 레닥션, 회전 로그
@@ -1101,32 +1101,44 @@ push/tag/release status:
 6. v0.19 RC 검증(깨끗한 VM 설치·uninstall·secret scan) → 태그 → 릴리스
 ```
 
-## 2인 엔지니어 분담 (2026-07-31 체계)
+## 담당 체계 (2026-08-20 변경)
+
+2026-07-31 의 2인 엔지니어 분담(Claude=core / GPT=cli·server·app·site·CI)은
+**태경 지시로 종료**했다. GPT 는 다른 작업으로 이동했고, **Claude 가 리포 전체를 단독으로 맡는다.**
 
 ```text
-Claude : velox-core  — 데이터 모델·AI 실행 경로·정책·성능
-GPT    : velox-cli / velox-server / velox-app / site / .github / scripts
-태경    : 제품 방향·승인·외부 결정(서명·과금)
+Claude : 리포 전체 (velox-core / cli / server / app / site / scripts / .github)
+태경    : 제품 방향·승인·외부 결정(코드 서명·과금·배포)
 ```
 
-작업 전 `git fetch` + `pull --ff-only`. 공유 파일(lib.rs / Cargo.toml / Cargo.lock / README)
-변경 시 커밋 메시지에 명시. **CI 실패는 최우선 수정.**
+분담이 없어졌으므로 파일 충돌 방지 규칙(작업 전 fetch, 공유 파일 명시)은
+더 이상 필수가 아니다. 다만 **CI 실패는 여전히 최우선 수정**이다.
 
-## GPT 담당으로 남은 CWD 상태 파일
+## 상태 파일 위치 — 전 크레이트 완료 (2026-08-20)
 
-velox-core 쪽은 `paths` 로 전부 이전했다. 아래는 CLI/server 소유라 손대지 않았다 —
-같은 방식으로 `velox_core::paths::resolve()` 를 쓰면 된다.
+`velox_core::paths` 가 모든 상태 파일의 위치를 결정한다. CWD 저장은 전부 제거됐다.
 
 ```text
-velox-cli/src/daemon.rs    velox_daemon.log
-velox-cli/src/diagnose.rs  velox_actions.log
-velox-cli/src/timeline.rs  velox_timeline.csv
-velox-server/src/main.rs   velox_baseline.json · velox_profile.json
+%LOCALAPPDATA%\APEX\Velox\
+├─ velox_policies.json      정책·동의
+├─ velox_models.json        모델 ID
+├─ velox_providers.json     커스텀 provider
+├─ velox_ledger.json        사용량 장부
+├─ velox_pricing.json       단가표
+├─ velox_checkpoints.txt    체크포인트
+├─ velox_profile.json       PC 프로필
+├─ velox_timeline.csv       성능 타임라인
+├─ logs\
+│  ├─ velox_daemon.log
+│  └─ velox_actions.log
+└─ reports\
+   └─ velox_baseline.json
 ```
 
-로그는 `%LOCALAPPDATA%\APEX\Velox\logs\`, 리포트는 `reports\` 로 가는 게
-v0.19 Config 설계와 맞는다.
-
+- `VELOX_DATA_DIR` 로 위치를 강제할 수 있다(테스트·포터블 실행). 이 경우 레거시 이전은 하지 않는다.
+- CWD 에 남은 v0.18 이전 파일은 첫 실행 시 1회 자동 이전된다. 대상이 이미 있으면 덮어쓰지 않는다.
+- 새 파일을 추가할 때는 **반드시 `paths::resolve` / `log_file` / `report_file` 을 쓴다.**
+  맨 파일명을 쓰면 v0.18 의 버그가 되살아난다.
 ## 시작하지 않는 것
 
 v0.19 범위 밖(Safe Project Actions, Plugin SDK, 계정/동기화)은 시작하지 않는다.

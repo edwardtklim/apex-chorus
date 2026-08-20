@@ -287,7 +287,11 @@ fn execute_with_safety(label: &str, guid: &str, rollback_guid: &str) {
 
 fn log_action(label: &str, guid: &str, rollback: &str, verified: bool) {
     use std::fs::OpenOptions;
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(LOG_FILE) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(velox_core::paths::log_file(LOG_FILE))
+    {
         let _ = writeln!(
             f,
             "[diagnose] set_power_plan label={} guid={} verified={} rollback={}",

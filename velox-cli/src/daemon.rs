@@ -23,7 +23,11 @@ fn log_event(msg: &str) {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(LOG_FILE) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(velox_core::paths::log_file(LOG_FILE))
+    {
         let _ = writeln!(f, "{} {}", ts, msg);
     }
 }

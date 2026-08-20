@@ -188,7 +188,7 @@ async fn save_baseline() -> Json<serde_json::Value> {
     let snap = tokio::task::spawn_blocking(Snapshot::collect).await.ok();
     if let Some(s) = &snap {
         let _ = std::fs::write(
-            "velox_baseline.json",
+            velox_core::paths::report_file("velox_baseline.json"),
             serde_json::to_string(s).unwrap_or_default(),
         );
     }
@@ -197,9 +197,10 @@ async fn save_baseline() -> Json<serde_json::Value> {
 
 /// 저장된 baseline과 현재 상태를 비교(구조 변화만). baseline 없으면 error.
 async fn compare_baseline() -> Json<serde_json::Value> {
-    let base: Option<Snapshot> = std::fs::read_to_string("velox_baseline.json")
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok());
+    let base: Option<Snapshot> =
+        std::fs::read_to_string(velox_core::paths::report_file("velox_baseline.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok());
     let base = match base {
         Some(b) => b,
         None => return Json(serde_json::json!({ "error": "no_baseline" })),
@@ -219,7 +220,7 @@ struct Profile {
 }
 
 async fn get_profile() -> Json<Profile> {
-    let p = std::fs::read_to_string("velox_profile.json")
+    let p = std::fs::read_to_string(velox_core::paths::resolve("velox_profile.json"))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
@@ -228,7 +229,7 @@ async fn get_profile() -> Json<Profile> {
 
 async fn save_profile(Json(p): Json<Profile>) -> Json<serde_json::Value> {
     let _ = std::fs::write(
-        "velox_profile.json",
+        velox_core::paths::resolve("velox_profile.json"),
         serde_json::to_string_pretty(&p).unwrap_or_default(),
     );
     Json(serde_json::json!({ "ok": true }))

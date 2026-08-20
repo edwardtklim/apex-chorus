@@ -24,13 +24,24 @@ pub const DATA_DIR_ENV: &str = "VELOX_DATA_DIR";
 /// CWD 에서 데이터 디렉터리로 옮겨야 하는 v0.18 이전 상태 파일들.
 ///
 /// 로그·CSV 등 CLI 소유 파일은 여기 넣지 않는다(해당 크레이트가 옮긴다).
-const LEGACY_FILES: &[&str] = &[
-    "velox_policies.json",
-    "velox_models.json",
-    "velox_providers.json",
-    "velox_ledger.json",
-    "velox_pricing.json",
-    "velox_checkpoints.txt",
+/// CWD 에 남아 있을 수 있는 v0.18 이전 상태 파일과 새 위치의 하위 디렉터리.
+///
+/// 빈 문자열이면 데이터 디렉터리 바로 아래로 간다.
+const LEGACY_FILES: &[(&str, &str)] = &[
+    // velox-core 소유
+    ("velox_policies.json", ""),
+    ("velox_models.json", ""),
+    ("velox_providers.json", ""),
+    ("velox_ledger.json", ""),
+    ("velox_pricing.json", ""),
+    ("velox_checkpoints.txt", ""),
+    // velox-cli 소유
+    ("velox_daemon.log", "logs"),
+    ("velox_actions.log", "logs"),
+    ("velox_timeline.csv", ""),
+    // velox-server 소유
+    ("velox_baseline.json", "reports"),
+    ("velox_profile.json", ""),
 ];
 
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -113,12 +124,20 @@ fn migrate_legacy(dir: &Path) -> Vec<String> {
         return Vec::new();
     }
     let mut moved = Vec::new();
-    for name in LEGACY_FILES {
+    for (name, sub) in LEGACY_FILES {
         let src = Path::new(name);
         if !src.is_file() {
             continue;
         }
-        let dst = dir.join(name);
+        let target_dir = if sub.is_empty() {
+            dir.to_path_buf()
+        } else {
+            dir.join(sub)
+        };
+        if !sub.is_empty() && std::fs::create_dir_all(&target_dir).is_err() {
+            continue;
+        }
+        let dst = target_dir.join(name);
         if dst.exists() {
             continue; // 새 위치 우선 — 덮어쓰지 않는다.
         }
@@ -129,6 +148,33 @@ fn migrate_legacy(dir: &Path) -> Vec<String> {
         }
     }
     moved
+}
+
+/// 로그 디렉터리(`<data_dir>/logs`). 없으면 만든다.
+pub fn logs_dir() -> PathBuf {
+    sub_dir("logs")
+}
+
+/// 리포트·스냅샷 디렉터리(`<data_dir>/reports`). 없으면 만든다.
+pub fn reports_dir() -> PathBuf {
+    sub_dir("reports")
+}
+
+/// 로그 파일 경로.
+pub fn log_file(name: &str) -> PathBuf {
+    logs_dir().join(name)
+}
+
+/// 리포트 파일 경로.
+pub fn report_file(name: &str) -> PathBuf {
+    reports_dir().join(name)
+}
+
+fn sub_dir(name: &str) -> PathBuf {
+    let dir = data_dir().join(name);
+    // 생성 실패는 무시 — 이후 파일 I/O 가 각자 실패를 처리한다.
+    let _ = std::fs::create_dir_all(&dir);
+    dir
 }
 
 #[cfg(test)]
