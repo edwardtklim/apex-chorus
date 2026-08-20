@@ -16,6 +16,7 @@ pub mod checkpoint;
 pub mod council;
 pub mod credentials;
 pub mod evidence;
+pub mod guidance;
 pub mod health;
 pub mod ledger;
 pub mod paths;

@@ -172,7 +172,14 @@ pub fn run_thermal(seconds: u64, limit: f32) {
     );
 
     if velox_core::snapshot::max_temp_c().is_none() {
-        println!("⚠ CPU 온도 센서 읽기 실패 (관리자 권한 필요/보드 미지원).");
+        println!(
+            "{}",
+            velox_core::guidance::Problem::SensorUnsupported {
+                what: "CPU 온도".into()
+            }
+            .guidance()
+            .render_plain()
+        );
         println!("  → 온도 대신 성능 유지율(처리량 하락)로 쓰로틀을 추정합니다.\n");
     }
 

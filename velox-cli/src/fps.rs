@@ -42,7 +42,14 @@ pub fn run(seconds: u64) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("Failed to start ETW trace: {e:?}");
-            eprintln!("Make sure you are running this terminal as Administrator.");
+            eprintln!(
+                "{}",
+                velox_core::guidance::Problem::AdminRequired {
+                    what: "FPS 측정(ETW 트레이스)".into()
+                }
+                .guidance()
+                .render_plain()
+            );
             return;
         }
     };

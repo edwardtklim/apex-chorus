@@ -5,9 +5,12 @@ use velox_core::council::{CouncilEvent, CouncilStatus};
 use velox_core::privacy::ContextScope;
 use velox_core::project::{self, ProjectLimits, ProjectScan};
 
-fn open_and_scan(path: &str) -> Result<(project::ProjectSession, ProjectScan), String> {
-    let session =
-        project::open(Path::new(path), ProjectLimits::default()).map_err(|e| e.to_string())?;
+/// 에러를 문자열로 뭉개지 않고 `ProjectError` 그대로 돌려준다 —
+/// guidance 가 거부 사유별로 다른 안내를 하려면 타입이 살아 있어야 한다.
+fn open_and_scan(
+    path: &str,
+) -> Result<(project::ProjectSession, ProjectScan), project::ProjectError> {
+    let session = project::open(Path::new(path), ProjectLimits::default())?;
     let scan = session.scan();
     Ok((session, scan))
 }
@@ -16,7 +19,8 @@ pub fn scan(path: &str, json: bool) {
     let (session, scan) = match open_and_scan(path) {
         Ok(result) => result,
         Err(error) => {
-            eprintln!("프로젝트 스캔 실패: {error}");
+            let problem: velox_core::guidance::Problem = (&error).into();
+            eprintln!("{}", problem.guidance().render_plain());
             return;
         }
     };
@@ -69,7 +73,8 @@ pub async fn analyze(path: &str, objective: Option<&str>) {
     let (session, scan) = match open_and_scan(path) {
         Ok(result) => result,
         Err(error) => {
-            eprintln!("프로젝트 스캔 실패: {error}");
+            let problem: velox_core::guidance::Problem = (&error).into();
+            eprintln!("{}", problem.guidance().render_plain());
             return;
         }
     };

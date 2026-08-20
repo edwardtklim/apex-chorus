@@ -832,7 +832,7 @@ Provider마다 HTTP 응답 파싱을 `ai.rs` 한 함수에 계속 쌓지 않는�
 - 깨끗한 Windows 10/11 VM 설치
 - uninstall 후 사용자 데이터 보존/삭제 선택
 - ZIP/installer secret scan
-- Release binary 서명 계획 확정
+- ~~Release binary 서명 계획 확정~~ → **v3 로 연기(2026-08-20 태경 지시)**. 그때까지는 서명 없이 배포하고 README·릴리스 노트에 SmartScreen 경고를 명시한다
 - 앱 crash 후 orphan server 없음
 - Local API 보안 회귀 테스트
 - README 설치 절차가 실제와 일치
@@ -1095,9 +1095,9 @@ push/tag/release status:
           velox-core::paths → %LOCALAPPDATA%\APEX\Velox (VELOX_DATA_DIR 로 override)
           레거시 파일 자동 이전 포함
 2. Logging — tracing 도입, key/prompt/serial 레닥션, 회전 로그
-3. Error UX — 모든 실패가 "다음 행동"을 안내
+3. [완료] Error UX — velox-core::guidance. 모든 실패가 요약·이유·다음 행동 3단으로
 4. Installer/Updater — 실제 인스톨러, 바로가기, checksum 검증, rollback
-5. 코드 서명 계획 확정  ← 태경 결정 사항(비용·본인확인)
+5. [v3 로 연기] 코드 서명 — 태경 지시(2026-08-20). 실제 판매·앱 런칭 시점까지 미룬다
 6. v0.19 RC 검증(깨끗한 VM 설치·uninstall·secret scan) → 태그 → 릴리스
 ```
 

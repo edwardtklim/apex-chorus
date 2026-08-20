@@ -56,19 +56,35 @@ pub async fn gated_text(
     };
     match execute_agent(req).await {
         Ok(r) => Some(r.text),
+        // 정책 실패는 전부 guidance 를 거쳐 "다음 행동"까지 함께 보여준다.
         Err(PolicyError::CloudNotAllowed(p)) => {
-            println!("⚠ {p}: 클라우드 호출 미승인 — `velox chorus consent {p}` 로 동의 후 사용");
+            println!(
+                "{}",
+                velox_core::guidance::Problem::ConsentMissing {
+                    provider: p.clone(),
+                    needed_scope: scope,
+                }
+                .guidance()
+                .render_plain()
+            );
             None
         }
         Err(PolicyError::ScopeExceeded { requested, max }) => {
             println!(
-                "⚠ 데이터 범위 초과(요청 {requested:?} > 허용 {max:?}) — `velox chorus consent {provider} --scope {}` 로 상향",
-                scope_label(requested)
+                "{}",
+                velox_core::guidance::Problem::ScopeTooLow {
+                    provider: provider.to_string(),
+                    requested,
+                    max,
+                }
+                .guidance()
+                .render_plain()
             );
             None
         }
         Err(e) => {
-            println!("⚠ {e}");
+            let problem: velox_core::guidance::Problem = (&e).into();
+            println!("{}", problem.guidance().render_plain());
             None
         }
     }

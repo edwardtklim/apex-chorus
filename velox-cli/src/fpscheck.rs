@@ -47,7 +47,14 @@ pub async fn run(seconds: u64) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("ETW 시작 실패: {e:?}");
-            eprintln!("관리자 권한 터미널에서 실행하세요.");
+            eprintln!(
+                "{}",
+                velox_core::guidance::Problem::AdminRequired {
+                    what: "FPS 측정(ETW 트레이스)".into()
+                }
+                .guidance()
+                .render_plain()
+            );
             return;
         }
     };
