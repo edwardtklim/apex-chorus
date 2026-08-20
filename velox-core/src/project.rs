@@ -103,6 +103,13 @@ pub fn is_secret_filename(name: &str) -> bool {
 }
 
 /// 키처럼 보이는 문자열을 가린다 — 코드 조각을 AI에 보내기 전에 항상 통과시킨다.
+///
+/// 두 단계로 훑는다.
+/// 1. 공백/따옴표로 자른 **토큰 단위** 검사 — `"sk-ant-..."` 처럼 값만 따로 있는 경우.
+/// 2. 문자열 **어디에 박혀 있든** 알려진 접두사부터 값 끝까지 잘라내는 검사 —
+///    `key=sk-ant-...` · `Authorization: Bearer sk-...` 처럼 다른 텍스트에 붙은 경우.
+///
+/// 1번만 있으면 `key=sk-ant-...` 같은 흔한 형태가 그대로 통과한다(v0.19에서 발견).
 pub fn redact_secrets(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for token in text.split_inclusive(|c: char| c.is_whitespace() || c == '"' || c == '\'') {
@@ -122,16 +129,52 @@ pub fn redact_secrets(text: &str) -> String {
             out.push_str(token);
         }
     }
+    redact_embedded(&out)
+}
+
+/// 다른 텍스트에 박힌 비밀을 접두사 기준으로 잘라낸다.
+fn redact_embedded(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let rest = &text[i..];
+        if let Some(p) = SECRET_PREFIXES.iter().find(|p| rest.starts_with(**p)) {
+            // 값의 끝 = 구분자 직전. 키에 쓰이지 않는 문자를 만나면 종료.
+            let end = rest
+                .find(|c: char| {
+                    c.is_whitespace()
+                        || c == '"'
+                        || c == '\''
+                        || c == ','
+                        || c == ';'
+                        || c == ')'
+                        || c == '}'
+                })
+                .unwrap_or(rest.len());
+            // 접두사만 있고 값이 없으면(짧으면) 비밀이 아니다 — 문서·코드의 언급일 뿐.
+            if end >= p.len() + 12 {
+                out.push_str("[REDACTED]");
+                i += end;
+                continue;
+            }
+        }
+        let ch = rest.chars().next().unwrap_or('\0');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
     out
 }
+
+/// 알려진 비밀 접두사. [`looks_like_secret`]과 [`redact_embedded`]가 공유한다.
+const SECRET_PREFIXES: [&str; 7] = ["sk-ant-", "sk-proj-", "sk-", "AIza", "xai-", "AKIA", "ghp_"];
 
 /// 토큰 하나가 알려진 비밀 형태인가.
 fn looks_like_secret(t: &str) -> bool {
     if t.len() < 20 {
         return false;
     }
-    const PREFIXES: [&str; 7] = ["sk-ant-", "sk-proj-", "sk-", "AIza", "xai-", "AKIA", "ghp_"];
-    if PREFIXES.iter().any(|p| t.starts_with(p)) {
+    if SECRET_PREFIXES.iter().any(|p| t.starts_with(p)) {
         return true;
     }
     t.contains("BEGIN") && t.contains("PRIVATE")
@@ -688,6 +731,41 @@ mod tests {
         // 짧은 평범한 토큰은 건드리지 않는다.
         let plain = redact_secrets("let x = 42; // fine");
         assert_eq!(plain, "let x = 42; // fine");
+    }
+
+    /// v0.19 회귀 방지 — 값이 다른 텍스트에 **붙어 있는** 형태.
+    ///
+    /// 토큰 단위 검사만 하던 시절에는 `key=sk-ant-...` 가 그대로 통과했다.
+    /// 설정 파일·로그·헤더에서 가장 흔한 형태라 이게 뚫리면 레닥션이 무의미하다.
+    #[test]
+    fn redaction_catches_embedded_secrets() {
+        let cases = [
+            "key=sk-ant-api03-AAAAAAAAAAAAAAAAAAAA",
+            "Authorization: Bearer sk-proj-BBBBBBBBBBBBBBBBBBBB",
+            "GEMINI_KEY=AIzaCCCCCCCCCCCCCCCCCCCCCCCC",
+            "url?token=xai-DDDDDDDDDDDDDDDDDDDDDDD&x=1",
+            "{\"k\":\"ghp_EEEEEEEEEEEEEEEEEEEEEEEE\"}",
+        ];
+        for c in cases {
+            let out = redact_secrets(c);
+            assert!(out.contains("[REDACTED]"), "레닥션 안 됨: {c} -> {out}");
+            for frag in [
+                "AAAAAAAAAAAAAAAAAAAA",
+                "BBBBBBBBBBBBBBBBBBBB",
+                "CCCCCCCCCCCCCCCCCCCCCCCC",
+                "DDDDDDDDDDDDDDDDDDDDDDD",
+                "EEEEEEEEEEEEEEEEEEEEEEEE",
+            ] {
+                assert!(!out.contains(frag), "키 값이 남았다: {c} -> {out}");
+            }
+        }
+    }
+
+    /// 문서에서 접두사만 언급한 경우는 가리지 않는다 — 과잉 레닥션 방지.
+    #[test]
+    fn redaction_leaves_bare_prefix_mentions_alone() {
+        let text = "키는 sk-ant- 로 시작합니다";
+        assert_eq!(redact_secrets(text), text);
     }
 
     #[test]

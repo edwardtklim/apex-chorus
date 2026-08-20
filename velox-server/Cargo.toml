@@ -8,6 +8,7 @@ license.workspace = true
 # core=엔진 · velox-cli=터미널 · velox-server=HTTP (같은 엔진, 세 얼굴)
 
 [dependencies]
+tracing = "0.1"
 velox-core = { path = "../velox-core" }
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }

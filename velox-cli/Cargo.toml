@@ -9,6 +9,7 @@ name = "velox"
 path = "src/main.rs"
 
 [dependencies]
+tracing = "0.1"
 velox-core = { path = "../velox-core" }
 dotenv = "0.15"
 wmi = "0.13"

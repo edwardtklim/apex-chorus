@@ -1094,7 +1094,7 @@ push/tag/release status:
 1. [완료] Config 위치 분리 — 전 크레이트 완료(core+cli+server). 문서 끝 참고
           velox-core::paths → %LOCALAPPDATA%\APEX\Velox (VELOX_DATA_DIR 로 override)
           레거시 파일 자동 이전 포함
-2. Logging — tracing 도입, key/prompt/serial 레닥션, 회전 로그
+2. [완료] Logging — velox-core::logging. tracing + 강제 레닥션 writer + 일일 회전(7개 보관) + export 미리보기
 3. [완료] Error UX — velox-core::guidance. 모든 실패가 요약·이유·다음 행동 3단으로
 4. Installer/Updater — 실제 인스톨러, 바로가기, checksum 검증, rollback
 5. [v3 로 연기] 코드 서명 — 태경 지시(2026-08-20). 실제 판매·앱 런칭 시점까지 미룬다

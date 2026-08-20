@@ -19,6 +19,7 @@ pub mod evidence;
 pub mod guidance;
 pub mod health;
 pub mod ledger;
+pub mod logging;
 pub mod paths;
 pub mod policy;
 pub mod pricing;

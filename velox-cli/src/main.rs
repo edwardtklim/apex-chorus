@@ -320,6 +320,9 @@ enum ModelCommands {
 
 #[tokio::main]
 async fn main() {
+    // 로그는 파일에만 남는다(터미널은 조용히). 가드를 main 끝까지 살려 flush 보장.
+    let _log_guard = velox_core::logging::init();
+    tracing::debug!(target: "velox::cli", "cli start");
     dotenv().ok();
     let cli = Cli::parse();
 

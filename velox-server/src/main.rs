@@ -33,6 +33,8 @@ const INDEX_HTML: &str = include_str!("../../site/index.html");
 
 #[tokio::main]
 async fn main() {
+    let _log_guard = velox_core::logging::init();
+    tracing::info!(target: "velox::server", "server start");
     dotenv::dotenv().ok(); // legacy/dev migration fallback; new keys use the OS credential store
     velox_core::credentials::migrate_dotenv(std::path::Path::new(".env"));
     let addr = std::env::var("VELOX_ADDR").unwrap_or_else(|_| "127.0.0.1:7878".into());
