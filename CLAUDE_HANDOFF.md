@@ -8,10 +8,10 @@
 *(2026-08-19 갱신 — 미국 새 데스크톱으로 이주 후 실측)*
 
 - 기준 브랜치: `main`
-- 현재 HEAD: `5b06f3f` (`chore(v0.18): align workspace version and roadmap`)
+- 현재 HEAD: v0.19 작업 진행 중 (아래 커밋 목록 참고)
 - 원격 `origin/main`: `5b06f3f` — **동기 상태, 미푸시 커밋 0**
-- Workspace package version: `0.18.0`
-- 개발 중인 다음 버전: `0.19.0` (Product Hardening)
+- Workspace package version: `0.19.0`
+- 개발 중인 다음 버전: `0.20.0` (Closed Alpha)
 - 게시된 GitHub Release: **v0.15.0 · v0.16.0 · v0.18.0(Latest)**
   - `v0.17.0` 태그는 만들지 않는다 — workspace version 이 0.16.0 에서 0.18.0 으로
     직접 올라가 0.17.0 인 커밋이 저장소에 없다. v0.17 Local Usage Ledger 는
@@ -1096,9 +1096,9 @@ push/tag/release status:
           레거시 파일 자동 이전 포함
 2. [완료] Logging — velox-core::logging. tracing + 강제 레닥션 writer + 일일 회전(7개 보관) + export 미리보기
 3. [완료] Error UX — velox-core::guidance. 모든 실패가 요약·이유·다음 행동 3단으로
-4. Installer/Updater — 실제 인스톨러, 바로가기, checksum 검증, rollback
+4. [완료] Installer/Updater — Install/Update/New-ReleasePackage 3종. 제어판 등록·실행중 교체 금지·checksum·롤백
 5. [v3 로 연기] 코드 서명 — 태경 지시(2026-08-20). 실제 판매·앱 런칭 시점까지 미룬다
-6. v0.19 RC 검증(깨끗한 VM 설치·uninstall·secret scan) → 태그 → 릴리스
+6. [진행] RC 검증 완료(설치·가드·제거·데이터 보존 실측) → 태그 → 릴리스. 깨끗한 VM 설치는 미검증
 ```
 
 ## 담당 체계 (2026-08-20 변경)
