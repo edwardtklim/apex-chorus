@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     APEX Velox 배포 패키지 생성 — 빌드 · 검사 · 압축 · 체크섬을 한 번에.
 
@@ -14,6 +14,8 @@
           install.bat                  (더블클릭용 얇은 래퍼)
           Install-ApexVelox.ps1        (실제 설치·제거)
           Update-ApexVelox.ps1         (확인·검증·롤백)
+          START-APEX-TEST.bat          (테스트 센터 — 벤치·수리 리포트 메뉴)
+          APEX-TestCenter.ps1
           LICENSE
 
     버전은 빌드된 바이너리에서 읽는다 — 인자로 받지 않는다(불일치 방지).
@@ -71,6 +73,8 @@ try {
     Copy-Item (Join-Path $Repo 'LICENSE') $stage -Force
     Copy-Item (Join-Path $PSScriptRoot 'Install-ApexVelox.ps1') $stage -Force
     Copy-Item (Join-Path $PSScriptRoot 'Update-ApexVelox.ps1')  $stage -Force
+    Copy-Item (Join-Path $PSScriptRoot 'APEX-TestCenter.ps1')   $stage -Force
+    Copy-Item (Join-Path $PSScriptRoot 'START-APEX-TEST.bat')   $stage -Force
 
     # install.bat — PowerShell 스크립트를 부르는 얇은 래퍼(더블클릭 편의).
     @"

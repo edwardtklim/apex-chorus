@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     APEX Velox 설치 관리자.
 
