@@ -32,7 +32,9 @@ param([switch]$SkipBuild)
 $ErrorActionPreference = 'Stop'
 
 $Repo    = Split-Path $PSScriptRoot -Parent
-$Release = Join-Path $Repo 'target\release'
+# CARGO_TARGET_DIR 을 쓰는 PC(예: USB 저장소를 로컬 SSD 에서 빌드)도 같은 스크립트로 패키징한다.
+$TargetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Repo 'target' }
+$Release = Join-Path $TargetDir 'release'
 $DistDir = Join-Path $Repo 'dist'
 
 function Write-Step { param($m) Write-Host "  $m" -ForegroundColor Gray }

@@ -49,6 +49,10 @@ working tree                                                     clean
   **이는 코드 서명이 v0.19 필수 항목인 이유를 그대로 보여준다** — 사용자 PC 에서도 같은 일이 일어난다.
 - MSVC Build Tools(VCTools 워크로드)가 없으면 링커 에러로 빌드 자체가 실패한다.
 - CI 스크립트는 `pwsh`(PowerShell 7)를 요구한다.
+- **PC3 서버(2026-09-17 구성):** Rust 1.98.1 · VS Build Tools 2022(VCTools, SDK 26100) · pwsh 7.6 · gh CLI.
+  SAC 꺼짐. 코드는 USB(`APEX ORIGIN PROJECT\apex-chorus`), 빌드 산출물은 `CARGO_TARGET_DIR=C:\APEX-build\target`
+  (New-ReleasePackage.ps1 · 테스트 센터가 이 변수를 따른다). 첫 검증: fmt/test(143)/clippy/release/API 테스트 전부 PASS.
+- 한국어 문자열이 든 `.ps1` 은 UTF-8 **BOM** 필수 — 없으면 Windows PowerShell 5.1(install.bat)이 파싱에 실패한다.
 
 ## 1. 제품 정의
 
@@ -1120,6 +1124,12 @@ push/tag/release status:
    - 사용자 1명이 개발자 도움 없이 실행
    - 측정 재현성 기록
 4. 발견된 P0/P1 버그 수정
+   (2026-09-17 PC3 스모크 테스트에서 발견 — 아직 미수정)
+   - [P1] report: 점수 차이가 노이즈(±10%) 안이면 Outcome::Unknown 이 되어 "측정 불가"로
+          표시·집계된다. 실제로는 측정됐고 "변화 없음"이다. 별도 outcome(NoChange) 필요.
+   - [P1] metrics: `velox --version`/`--help`/인자 오류는 clap 이 record_clean_exit 전에
+          프로세스를 끝내 crash 로 집계된다. try_parse 후 정리하고 종료해야 한다.
+          (테스트 센터는 이 때문에 --version 호출을 제거함)
 5. v0.20.0 태그 → 릴리스
 ```
 

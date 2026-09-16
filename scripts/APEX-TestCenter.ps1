@@ -40,6 +40,7 @@ function Find-VeloxDir {
         $candidates += $PSScriptRoot
         $candidates += (Join-Path (Split-Path $PSScriptRoot -Parent) 'target\release')
     }
+    if ($env:CARGO_TARGET_DIR) { $candidates += (Join-Path $env:CARGO_TARGET_DIR 'release') }
     $candidates += (Join-Path $env:LOCALAPPDATA 'ApexVelox')
     foreach ($c in $candidates) {
         if ($c -and (Test-Path (Join-Path $c 'velox.exe'))) { return (Resolve-Path $c).Path }
@@ -238,7 +239,8 @@ function Invoke-Custom {
 
 function Show-Header {
     Clear-Host
-    $ver = try { (& $Velox --version 2>$null) -join '' } catch { '실행 불가' }
+    # velox --version 은 clap 이 바로 종료시켜 알파 지표에 가짜 crash 로 남는다 — 부르지 않는다.
+    $ver = "velox.exe 빌드 $((Get-Item $Velox).LastWriteTime.ToString('yyyy-MM-dd HH:mm'))"
     Write-Host ''
     Write-Host '  ╔══════════════════════════════════════════════╗' -ForegroundColor Cyan
     Write-Host '  ║        APEX Velox  ·  테스트 센터            ║' -ForegroundColor Cyan
