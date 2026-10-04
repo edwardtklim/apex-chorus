@@ -13,6 +13,7 @@ pub mod action;
 pub mod ai;
 pub mod benchmark;
 pub mod checkpoint;
+pub mod conversation;
 pub mod council;
 pub mod credentials;
 pub mod evidence;

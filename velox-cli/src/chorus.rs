@@ -13,13 +13,55 @@ fn get_system_context() -> String {
     .to_prompt_json()
 }
 
-pub async fn ask(prompt: &str, model: &str, no_context: bool) {
-    // 최소 데이터만 담은 컨텍스트(Minimal). no_context면 데이터 없음.
-    let full_prompt = if no_context {
-        prompt.to_string()
-    } else {
-        format!("{}\nUser question: {}", get_system_context(), prompt)
+/// 한 번 묻고 답을 출력한다. `conversation` 을 주면 그 대화를 이어간다.
+///
+/// `conversation` 이 있으면: 그 대화의 최근 맥락을 프롬프트 앞에 붙이고,
+/// 질문과 답을 대화에 기록한다. **다른 모델을 지정해도 같은 대화를 이어갈 수 있다** —
+/// 마스터 플랜의 "AI → APEX 공통 맥락 → 다음 AI" 흐름이다.
+pub async fn ask_in(prompt: &str, model: &str, no_context: bool, conversation: Option<&str>) {
+    use velox_core::conversation as conv;
+
+    // 이어갈 대화를 먼저 읽는다 — 없는 id 면 AI 를 호출하기 전에 멈춘다.
+    let existing = match conversation {
+        Some(id) => match conv::load(id) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                println!("✗ {e}");
+                return;
+            }
+        },
+        None => None,
     };
+
+    // 보낼 맥락: 시스템 정보(Minimal) + 이전 대화 발췌. 전체 대화를 그대로 보내지 않는다.
+    let history = existing
+        .as_ref()
+        .map(|c| conv::context_text(c, 12, 6_000))
+        .unwrap_or_default();
+    let mut full_prompt = String::new();
+    if !no_context {
+        full_prompt.push_str(&get_system_context());
+        full_prompt.push('\n');
+    }
+    if !history.is_empty() {
+        full_prompt.push_str(&history);
+        full_prompt.push('\n');
+    }
+    full_prompt.push_str("User question: ");
+    full_prompt.push_str(prompt);
+
+    if let Some(c) = &existing {
+        println!(
+            "대화 이어가기: {} ({}개 메시지){}",
+            c.meta.title,
+            c.meta.message_count,
+            if c.meta.model != model && !c.meta.model.is_empty() {
+                format!(" · 모델 변경 {} → {model}", c.meta.model)
+            } else {
+                String::new()
+            }
+        );
+    }
     let label = if load_providers().iter().any(|p| p.name == model) {
         format!("{model} (custom)")
     } else {
@@ -27,15 +69,106 @@ pub async fn ask(prompt: &str, model: &str, no_context: bool) {
     };
     println!("Asking {label}...\n");
     // 정책 게이트를 거친다 — 미승인 provider로 자동 대체(fallback)하지 않는다.
-    if let Some(text) = gated_text(
+    let Some(text) = gated_text(
         model,
         AgentPurpose::Other,
         ContextScope::Minimal,
         full_prompt,
     )
     .await
-    {
-        println!("{text}");
+    else {
+        // 거부·실패한 호출은 대화에 기록하지 않는다(답이 없으므로).
+        return;
+    };
+    println!("{text}");
+
+    // 답을 받은 뒤에만 기록한다. 기록 실패가 답을 가리지 않게 경고만 띄운다.
+    let id = match existing {
+        Some(c) => Some(c.meta.id),
+        None => None,
+    };
+    if let Some(id) = id {
+        if let Err(e) = conv::append(&id, conv::Role::User, prompt, None, None) {
+            println!("\n! 질문을 대화에 기록하지 못했습니다: {e}");
+        }
+        match conv::append(
+            &id,
+            conv::Role::Assistant,
+            &text,
+            Some(model),
+            Some(&model_name(model)),
+        ) {
+            Ok(meta) => println!("\n(대화 {} · 메시지 {}개)", meta.id, meta.message_count),
+            Err(e) => println!("\n! 답을 대화에 기록하지 못했습니다: {e}"),
+        }
+    }
+}
+
+/// 새 대화를 만든다. 이후 `chorus ask --conversation <id>` 로 이어간다.
+pub fn chat_new(title: &str, model: &str) {
+    match velox_core::conversation::create(title, model, &model_name(model)) {
+        Ok(c) => {
+            println!("✓ 새 대화: {}", c.meta.title);
+            println!("  id: {}", c.meta.id);
+            println!(
+                "  이어가기: velox chorus ask \"질문\" --conversation {}",
+                c.meta.id
+            );
+        }
+        Err(e) => println!("✗ {e}"),
+    }
+}
+
+/// 대화 목록 — 최근에 쓴 것부터.
+pub fn chat_list() {
+    let items = velox_core::conversation::list();
+    if items.is_empty() {
+        println!("저장된 대화가 없습니다.");
+        println!("  다음 행동: velox chorus chat new \"제목\" 으로 시작하세요.");
+        return;
+    }
+    println!("=== 대화 {}개 ===\n", items.len());
+    for m in &items {
+        println!("{}  {}", m.updated_at, m.title);
+        println!(
+            "    id {} · 메시지 {} · 마지막 모델 {}",
+            m.id,
+            m.message_count,
+            if m.model.is_empty() { "-" } else { &m.model }
+        );
+    }
+}
+
+/// 대화 한 건의 전체 내용.
+pub fn chat_show(id: &str) {
+    match velox_core::conversation::load(id) {
+        Ok(c) => {
+            println!("=== {} ===", c.meta.title);
+            println!(
+                "{} ~ {} · 메시지 {}개\n",
+                c.meta.created_at, c.meta.updated_at, c.meta.message_count
+            );
+            for m in &c.messages {
+                let who = match (&m.provider, &m.model) {
+                    (Some(p), Some(mo)) => format!("{} [{p}/{mo}]", m.role.label()),
+                    _ => m.role.label().to_string(),
+                };
+                println!("[{}] {who}", m.at);
+                println!("{}\n", m.text);
+            }
+            if c.messages.is_empty() {
+                println!("(아직 메시지가 없습니다)");
+            }
+        }
+        Err(e) => println!("✗ {e}"),
+    }
+}
+
+/// 대화 삭제 — 되돌릴 수 없으므로 사용자가 id 를 정확히 줘야 한다.
+pub fn chat_delete(id: &str) {
+    match velox_core::conversation::delete(id) {
+        Ok(()) => println!("✓ 대화를 삭제했습니다: {id}"),
+        Err(e) => println!("✗ {e}"),
     }
 }
 

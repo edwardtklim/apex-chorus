@@ -337,6 +337,14 @@ enum ChorusCommands {
         use_model: Option<String>,
         #[arg(long = "no-context")]
         no_context: bool,
+        /// 이 대화를 이어간다 (id는 `chorus chat list`). 다른 모델로 이어가도 맥락이 전달됩니다
+        #[arg(long)]
+        conversation: Option<String>,
+    },
+    /// 저장된 대화 — 새로 만들기·목록·보기·삭제 (전부 이 PC 안에만 저장)
+    Chat {
+        #[command(subcommand)]
+        action: ChatCommands,
     },
     /// 연결된 AI 목록 + 모델/키/정책 상태
     Models,
@@ -373,6 +381,22 @@ enum ChorusCommands {
     },
     /// AI 합의 — 같은 질문을 여러 모델에 → 공통점/차이 정리: chorus consensus "질문"
     Consensus { question: String },
+}
+
+#[derive(Subcommand)]
+enum ChatCommands {
+    /// 새 대화 시작: chat new "제목" [--use <provider>]
+    New {
+        title: String,
+        #[arg(long = "use", default_value = "claude")]
+        use_model: String,
+    },
+    /// 대화 목록 (최근 순)
+    List,
+    /// 대화 전체 내용 보기
+    Show { id: String },
+    /// 대화 삭제 (되돌릴 수 없음)
+    Delete { id: String },
 }
 
 #[derive(Subcommand)]
@@ -460,6 +484,7 @@ async fn main() {
                 prompt,
                 use_model,
                 no_context,
+                conversation,
             } => {
                 let (model, auto) = match use_model {
                     Some(m) => (m, false),
@@ -470,8 +495,14 @@ async fn main() {
                 } else {
                     println!("→ Using: {}\n", model);
                 }
-                chorus::ask(&prompt, &model, no_context).await;
+                chorus::ask_in(&prompt, &model, no_context, conversation.as_deref()).await;
             }
+            ChorusCommands::Chat { action } => match action {
+                ChatCommands::New { title, use_model } => chorus::chat_new(&title, &use_model),
+                ChatCommands::List => chorus::chat_list(),
+                ChatCommands::Show { id } => chorus::chat_show(&id),
+                ChatCommands::Delete { id } => chorus::chat_delete(&id),
+            },
             ChorusCommands::Models => {
                 chorus::show_models();
             }
