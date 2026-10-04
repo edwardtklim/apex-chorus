@@ -14,6 +14,7 @@ mod metrics;
 mod project;
 mod report;
 mod snapshot;
+mod system;
 mod tempcheck;
 mod thermals;
 mod timeline;
@@ -143,6 +144,32 @@ enum Commands {
     Metrics {
         #[command(subcommand)]
         action: MetricsCommands,
+    },
+    /// 시스템 관리 조회 — 서비스·시작 프로그램·디스크·네트워크 (읽기 전용, 아무것도 바꾸지 않음)
+    System {
+        #[command(subcommand)]
+        action: SystemCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum SystemCommands {
+    /// 요약 — 수집 시각·확인할 항목·디스크·네트워크·서비스 개수
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// 서비스 목록 (--stopped 면 자동 시작인데 멈춘 것만)
+    Services {
+        #[arg(long)]
+        stopped: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// 시작 프로그램 목록
+    Startup {
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -566,6 +593,11 @@ async fn main() {
                 note,
                 json,
             } => report::repair(&before, &after, out.as_deref(), &machine, &note, json),
+        },
+        Commands::System { action } => match action {
+            SystemCommands::Status { json } => system::status(json),
+            SystemCommands::Services { stopped, json } => system::services(stopped, json),
+            SystemCommands::Startup { json } => system::startup(json),
         },
         Commands::Metrics { action } => match action {
             MetricsCommands::Summary { json } => metrics::summary(json),
