@@ -396,28 +396,31 @@ function repairBuild(){
     btn.disabled=false;
     if(d.error){ out.innerHTML='<p class="warn">'+esc(d.message||d.error)+'</p>'; return; }
     var r=d.report, h='';
-    var pass=0,fail=0,unk=0;
+    // 쟀는데 변화가 없는 것(no_change)과 못 잰 것(unknown)은 절대 한 칸에 합치지 않는다.
+    var LAB={pass:'개선',fail:'악화',no_change:'변화 없음',noted:'기록만',unknown:'측정 불가'};
+    var pass=0,fail=0,same=0,unk=0;
     for(var i=0;i<r.verdicts.length;i++){
       var o=r.verdicts[i].outcome;
-      if(o==='pass')pass++; else if(o==='fail')fail++; else unk++;
+      if(o==='pass')pass++; else if(o==='fail')fail++; else if(o==='no_change')same++; else if(o==='unknown')unk++;
     }
     h+='<div style="display:flex;gap:22px;margin-bottom:14px">';
     h+='<div><div style="font-size:22px;font-weight:700">'+pass+'</div><div class="muted" style="font-size:11px">개선</div></div>';
     h+='<div><div style="font-size:22px;font-weight:700">'+fail+'</div><div class="muted" style="font-size:11px">악화</div></div>';
+    h+='<div><div style="font-size:22px;font-weight:700">'+same+'</div><div class="muted" style="font-size:11px">변화 없음</div></div>';
     h+='<div><div style="font-size:22px;font-weight:700">'+unk+'</div><div class="muted" style="font-size:11px">측정 불가</div></div>';
     h+='</div>';
     for(var c=0;c<r.caveats.length;c++) h+='<div class="warn">'+esc(r.caveats[c])+'</div>';
     h+='<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:10px">';
     for(var v=0;v<r.verdicts.length;v++){
       var d2=r.verdicts[v];
-      var lab = d2.outcome==='pass'?'개선':(d2.outcome==='fail'?'악화':'측정 불가');
+      var lab = LAB[d2.outcome] || d2.outcome;
       h+='<tr style="border-bottom:.5px solid var(--line)"><td style="padding:8px 6px;vertical-align:top"><b>'+esc(d2.name)+'</b><div class="muted" style="font-size:11px;margin-top:2px">'+esc(d2.criterion)+'</div></td>';
       h+='<td style="padding:8px 6px;vertical-align:top">'+esc(d2.measured)+'</td>';
       h+='<td style="padding:8px 6px;vertical-align:top;white-space:nowrap">'+lab+'</td></tr>';
     }
     h+='</table>';
     if(d.html_saved) h+='<p class="muted" style="font-size:12px;margin-top:12px">공유용 HTML 리포트가 저장되었습니다:<br><code>'+esc(d.html_path)+'</code></p>';
-    h+='<p class="muted" style="font-size:11px;margin-top:6px">benchmark version '+esc(r.meta.benchmark_version)+' · 같은 버전끼리만 비교할 수 있습니다. 측정 불가는 실패가 아니라 재지 못했다는 뜻입니다.</p>';
+    h+='<p class="muted" style="font-size:11px;margin-top:6px">benchmark version '+esc(r.meta.benchmark_version)+' · 같은 버전끼리만 비교할 수 있습니다. "변화 없음"은 쟀는데 차이가 노이즈 범위라는 뜻이고, "측정 불가"는 아예 재지 못했다는 뜻입니다.</p>';
     out.innerHTML=h;
   }).catch(function(){ btn.disabled=false; out.innerHTML='<p class="warn">리포트 생성에 실패했습니다.</p>'; });
 }

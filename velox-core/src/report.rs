@@ -68,6 +68,10 @@ pub struct SessionMeasurement {
 pub enum Outcome {
     Pass,
     Fail,
+    /// 양쪽 다 측정했고, 차이가 노이즈 범위 안이다. **측정 불가가 아니다** — 변화가 없다는 뜻이다.
+    NoChange,
+    /// 좋고 나쁨을 자동 판정하지 않는 항목(예: 구성 변화). 기록만 한다.
+    Noted,
     /// 측정하지 못했다. **실패가 아니다** — 모른다는 뜻이다.
     Unknown,
 }
@@ -77,7 +81,20 @@ impl Outcome {
         match self {
             Outcome::Pass => "개선",
             Outcome::Fail => "악화",
+            Outcome::NoChange => "변화 없음",
+            Outcome::Noted => "기록만",
             Outcome::Unknown => "측정 불가",
+        }
+    }
+
+    /// HTML/UI 의 스타일 키. 사람이 읽는 라벨과 분리해 둔다.
+    pub fn css_class(&self) -> &str {
+        match self {
+            Outcome::Pass => "pass",
+            Outcome::Fail => "fail",
+            Outcome::NoChange => "same",
+            Outcome::Noted => "note",
+            Outcome::Unknown => "unk",
         }
     }
 }
@@ -181,8 +198,8 @@ fn score_verdict(name: &str, before: Option<f64>, after: Option<f64>) -> Verdict
             } else if pct <= -SCORE_NOISE_PCT {
                 Outcome::Fail
             } else {
-                // 노이즈 범위 — 개선도 악화도 아니다. 단정하지 않는다.
-                Outcome::Unknown
+                // 노이즈 범위 — 개선도 악화도 아니다. 재지 못한 것과 구분한다.
+                Outcome::NoChange
             };
             Verdict {
                 name: name.into(),
@@ -212,7 +229,7 @@ fn sustain_verdict(before: Option<f64>, after: Option<f64>) -> Verdict {
             } else if diff_pp <= -SUSTAIN_NOISE_PCT {
                 Outcome::Fail
             } else {
-                Outcome::Unknown
+                Outcome::NoChange
             };
             Verdict {
                 name: "쓰로틀링(유지율)".into(),
@@ -241,7 +258,7 @@ fn temp_verdict(before: Option<f32>, after: Option<f32>) -> Verdict {
             } else if d >= TEMP_NOISE_C {
                 Outcome::Fail
             } else {
-                Outcome::Unknown
+                Outcome::NoChange
             };
             Verdict {
                 name: "최고 온도".into(),
@@ -265,7 +282,7 @@ fn driver_verdict(diff: &SnapshotDiff) -> Verdict {
     let n = diff.changed.len() + diff.added.len() + diff.removed.len();
     Verdict {
         name: "시스템 구성 변화".into(),
-        outcome: Outcome::Unknown,
+        outcome: Outcome::Noted,
         criterion,
         measured: if n == 0 {
             "변화 없음".into()
@@ -280,15 +297,28 @@ fn driver_verdict(diff: &SnapshotDiff) -> Verdict {
     }
 }
 
+/// 판정 개수 요약. "변화 없음"과 "측정 불가"를 **절대 한 칸에 합치지 않는다** —
+/// 하나는 측정 결과이고 하나는 측정 실패다.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Tally {
+    pub pass: usize,
+    pub fail: usize,
+    pub no_change: usize,
+    pub noted: usize,
+    pub unknown: usize,
+}
+
 impl RepairReport {
-    /// 판정 요약 — (개선, 악화, 측정불가).
-    pub fn tally(&self) -> (usize, usize, usize) {
-        let mut t = (0, 0, 0);
+    /// 판정 요약 — 개선/악화/변화 없음/기록만/측정 불가 개수.
+    pub fn tally(&self) -> Tally {
+        let mut t = Tally::default();
         for v in &self.verdicts {
             match v.outcome {
-                Outcome::Pass => t.0 += 1,
-                Outcome::Fail => t.1 += 1,
-                Outcome::Unknown => t.2 += 1,
+                Outcome::Pass => t.pass += 1,
+                Outcome::Fail => t.fail += 1,
+                Outcome::NoChange => t.no_change += 1,
+                Outcome::Noted => t.noted += 1,
+                Outcome::Unknown => t.unknown += 1,
             }
         }
         t
@@ -301,7 +331,7 @@ impl RepairReport {
     /// 자체 완결 HTML — 외부 리소스를 전혀 참조하지 않는다.
     /// 인터넷 없는 수리 현장에서도, 메일로 보내도 그대로 열린다.
     pub fn to_html(&self) -> String {
-        let (pass, fail, unknown) = self.tally();
+        let t = self.tally();
         let mut s = String::with_capacity(8192);
 
         s.push_str("<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">");
@@ -321,6 +351,7 @@ th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid #8883;vertical
 th{font-weight:600;font-size:.8rem;color:#8a8a8a;text-transform:uppercase;letter-spacing:.03em}\
 .tag{display:inline-block;padding:.1rem .5rem;border-radius:99px;font-size:.75rem;font-weight:600}\
 .pass{background:#0a7d3222;color:#0a7d32}.fail{background:#b3261e22;color:#b3261e}.unk{background:#8884;color:#8a8a8a}\
+.same{background:#2f6feb22;color:#2f6feb}.note{background:#6b5cff22;color:#6b5cff}\
 .crit{color:#8a8a8a;font-size:.82rem;margin-top:.2rem}\
 .ai{border-left:3px solid #6b5cff;background:#6b5cff11;padding:.8rem 1rem;margin:.5rem 0;border-radius:0 6px 6px 0}\
 .ai-h{font-size:.78rem;font-weight:700;color:#6b5cff;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem}\
@@ -349,7 +380,8 @@ code{background:#8882;padding:.1rem .3rem;border-radius:3px;font-size:.85em}\
         }
 
         s.push_str(&format!(
-            "<div class=\"sum\"><div>{pass}<span>개선</span></div><div>{fail}<span>악화</span></div><div>{unknown}<span>측정 불가</span></div></div>"
+            "<div class=\"sum\"><div>{}<span>개선</span></div><div>{}<span>악화</span></div><div>{}<span>변화 없음</span></div><div>{}<span>측정 불가</span></div></div>",
+            t.pass, t.fail, t.no_change, t.unknown
         ));
 
         for c in &self.caveats {
@@ -359,11 +391,7 @@ code{background:#8882;padding:.1rem .3rem;border-radius:3px;font-size:.85em}\
         // --- 측정값 ---
         s.push_str("<h2>측정 결과</h2><table><tr><th>항목</th><th>측정값</th><th>판정</th></tr>");
         for v in &self.verdicts {
-            let cls = match v.outcome {
-                Outcome::Pass => "pass",
-                Outcome::Fail => "fail",
-                Outcome::Unknown => "unk",
-            };
+            let cls = v.outcome.css_class();
             s.push_str(&format!(
                 "<tr><td><strong>{}</strong><div class=\"crit\">{}</div></td><td>{}</td><td><span class=\"tag {}\">{}</span></td></tr>",
                 esc(&v.name),
@@ -536,9 +564,9 @@ mod tests {
         assert!(v.measured.contains("+10.0%"));
     }
 
-    /// 노이즈 범위의 차이를 개선이라고 부르지 않는다.
+    /// 노이즈 범위의 차이를 개선이라고 부르지 않는다. 동시에 "측정 불가"도 아니다.
     #[test]
-    fn small_difference_is_unknown_not_pass() {
+    fn small_difference_is_no_change_not_pass() {
         let r = build(
             ReportMeta::new("t", ""),
             measurement("before", "i7", Some(1000.0), None),
@@ -549,7 +577,28 @@ mod tests {
             .iter()
             .find(|v| v.name == "CPU 싱글 성능")
             .unwrap();
-        assert_eq!(v.outcome, Outcome::Unknown, "1% 차이는 노이즈다");
+        assert_eq!(v.outcome, Outcome::NoChange, "1% 차이는 노이즈다");
+    }
+
+    /// 쟀는데 변화가 없는 것과, 아예 재지 못한 것을 섞으면 리포트를 못 믿는다.
+    /// (2026-09-17 PC3 스모크 테스트에서 "측정 불가 5"로 찍힌 회귀)
+    #[test]
+    fn measured_noise_is_never_counted_as_unmeasured() {
+        let r = build(
+            ReportMeta::new("t", ""),
+            measurement("before", "i7", Some(1000.0), None),
+            measurement("after", "i7", Some(1010.0), None),
+        );
+        let t = r.tally();
+        assert_eq!(t.no_change, 1, "CPU 싱글은 쟀고 변화가 없었다");
+        assert_eq!(t.noted, 1, "구성 변화는 판정하지 않고 기록만 한다");
+        // 측정 불가로 남는 것은 실제로 못 잰 항목들뿐이다(멀티·유지율·온도).
+        assert_eq!(t.unknown, 3);
+        assert_eq!(t.pass, 0);
+        assert_eq!(t.fail, 0);
+
+        let html = r.to_html();
+        assert!(html.contains("변화 없음"), "HTML 에도 구분이 보여야 한다");
     }
 
     /// 회귀 방지 — 실측한 노트북 편차(single 7.2%)를 개선으로 보고하면 안 된다.
@@ -572,7 +621,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 v.outcome,
-                Outcome::Unknown,
+                Outcome::NoChange,
                 "{b} → {a} 는 노이즈 범위인데 개선으로 판정됐다"
             );
         }

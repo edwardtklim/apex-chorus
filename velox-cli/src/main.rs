@@ -390,7 +390,19 @@ async fn main() {
     tracing::debug!(target: "velox::cli", "cli start");
     velox_core::metrics::record_start();
     dotenv().ok();
-    let cli = Cli::parse();
+
+    // `Cli::parse()` 는 --version/--help/인자 오류에서 clap 이 곧바로 프로세스를 끝낸다.
+    // 그러면 record_clean_exit 가 호출되지 않아 **정상 종료가 crash 로 집계된다**
+    // (알파 지표의 crash 수가 부풀던 원인). 직접 받아서 정리한 뒤 종료한다.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            velox_core::metrics::record_clean_exit();
+            // 도움말/버전은 stdout, 오류는 stderr + 비정상 종료 코드 — clap 의 기본 동작을 유지한다.
+            e.print().ok();
+            std::process::exit(e.exit_code());
+        }
+    };
 
     match cli.command {
         Commands::Info => run_info(),

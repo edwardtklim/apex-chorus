@@ -120,7 +120,7 @@ pub fn repair(before: &str, after: &str, out: Option<&str>, machine: &str, note:
     }
 
     // 터미널 요약 — 파일로 내보내지 않아도 결과를 바로 볼 수 있게.
-    let (pass, fail, unknown) = report.tally();
+    let t = report.tally();
     println!("\n=== APEX 수리 리포트 ===");
     if !report.meta.machine.is_empty() {
         println!("PC: {}", report.meta.machine);
@@ -128,7 +128,11 @@ pub fn repair(before: &str, after: &str, out: Option<&str>, machine: &str, note:
     if !report.meta.work_note.is_empty() {
         println!("작업: {}", report.meta.work_note);
     }
-    println!("개선 {pass} · 악화 {fail} · 측정 불가 {unknown}\n");
+    // "변화 없음"(쟀고 차이가 없음)과 "측정 불가"(못 쟀음)를 따로 보여준다.
+    println!(
+        "개선 {} · 악화 {} · 변화 없음 {} · 측정 불가 {}\n",
+        t.pass, t.fail, t.no_change, t.unknown
+    );
 
     for c in &report.caveats {
         println!("⚠ {c}");

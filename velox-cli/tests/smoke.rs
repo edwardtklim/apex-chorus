@@ -42,3 +42,41 @@ fn chorus_models_runs() {
         "`velox chorus models` 는 0으로 종료해야 함"
     );
 }
+
+/// 회귀 방지 — `--version` 같은 조기 종료가 알파 지표의 crash 로 집계되면 안 된다.
+///
+/// clap 은 --version/--help/인자 오류에서 프로세스를 바로 끝낸다. 그 경로가
+/// `metrics::record_clean_exit()` 를 건너뛰면 세션 표식이 남아 다음 실행이
+/// crash 로 세어진다. 2026-09-17 스모크 테스트에서 19회 실행 중 7회가 가짜 crash 였다.
+#[test]
+fn early_exit_paths_are_not_counted_as_crashes() {
+    let dir = std::env::temp_dir().join(format!("velox-metrics-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("임시 데이터 디렉터리 생성 실패");
+
+    let run = |args: &[&str]| {
+        velox()
+            .env("VELOX_DATA_DIR", &dir)
+            .args(args)
+            .output()
+            .expect("velox 실행 실패")
+    };
+
+    assert!(run(&["--version"]).status.success());
+    assert!(run(&["--help"]).status.success());
+    // 잘못된 인자는 0 이 아닌 코드로 끝나지만, 그래도 crash 가 아니다.
+    assert!(!run(&["such-command-does-not-exist"]).status.success());
+
+    let out = run(&["metrics", "summary", "--json"]);
+    let json = String::from_utf8_lossy(&out.stdout);
+    let crashes = json
+        .lines()
+        .find(|l| l.contains("\"crashes\""))
+        .unwrap_or_else(|| panic!("crashes 필드가 없다: {json}"));
+    assert!(
+        crashes.contains(": 0"),
+        "조기 종료가 crash 로 집계됐다: {crashes}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
