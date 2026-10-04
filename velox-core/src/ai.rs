@@ -339,6 +339,11 @@ fn usage_gemini(body: &serde_json::Value) -> Option<crate::ledger::TokenUsage> {
     (!t.is_empty()).then_some(t)
 }
 
+/// Gemini 요청 URL. **키를 받지 않는다** — URL 에 비밀값이 들어갈 길 자체를 없앤다.
+fn gemini_url(model: &str) -> String {
+    format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent")
+}
+
 pub(crate) async fn query_with_usage(model: &str, prompt: &str) -> Option<ProviderReply> {
     let client = http_client();
     let models = load_models();
@@ -367,12 +372,10 @@ pub(crate) async fn query_with_usage(model: &str, prompt: &str) -> Option<Provid
         }
         "gemini" => {
             let key = api_key_for("gemini")?;
-            let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-                models.gemini, key
-            );
             let r = client
-                .post(&url)
+                .post(gemini_url(&models.gemini))
+                // 키는 헤더로만 보낸다 — URL 에 넣으면 오류 메시지·프록시 로그에 남는다.
+                .header("x-goog-api-key", &key)
                 .header("content-type", "application/json")
                 .json(&json!({ "contents": [{ "parts": [{ "text": prompt }] }] }))
                 .send()
@@ -669,6 +672,15 @@ mod net_tests {
             .await
             .expect("응답 파싱");
         assert!(got.usage.is_none());
+    }
+
+    /// 회귀 방지 — Gemini 키가 URL 쿼리(`?key=`)에 실리면 오류 메시지·프록시 로그로 샌다.
+    #[test]
+    fn gemini_url_never_carries_the_key() {
+        let url = gemini_url("gemini-2.5-pro");
+        assert!(url.ends_with("/models/gemini-2.5-pro:generateContent"));
+        assert!(!url.contains('?'), "쿼리 문자열이 있으면 안 된다: {url}");
+        assert!(!url.contains("key="));
     }
 
     #[test]
