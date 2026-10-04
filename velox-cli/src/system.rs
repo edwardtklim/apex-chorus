@@ -188,3 +188,148 @@ fn record(v: &SystemView, started: std::time::Instant) {
         started.elapsed().as_millis() as u64,
     );
 }
+
+/// `velox system save` — 지금 상태를 기준점으로 저장한다. 이전 기준점은 교체된다.
+pub fn save_baseline() {
+    let v = sysmanage::collect();
+    let unread: Vec<&str> = [
+        ("서비스", v.services.reason()),
+        ("시작 프로그램", v.startup.reason()),
+        ("디스크", v.disks.reason()),
+        ("네트워크", v.network.reason()),
+    ]
+    .into_iter()
+    .filter_map(|(what, r)| r.map(|_| what))
+    .collect();
+
+    match sysmanage::save_baseline(&v) {
+        Ok(()) => {
+            println!("✓ 기준점을 저장했습니다 ({})", v.collected_at);
+            if !unread.is_empty() {
+                // 못 읽은 항목은 나중에 비교할 수 없다 — 지금 알려준다.
+                println!(
+                    "  ! 읽지 못한 항목은 나중에 비교되지 않습니다: {}",
+                    unread.join(", ")
+                );
+            }
+            println!("  나중에 `velox system changes` 로 무엇이 달라졌는지 볼 수 있습니다.");
+        }
+        Err(e) => println!("✗ {e}"),
+    }
+}
+
+/// `velox system changes` — 기준점 이후 달라진 것. 좋고 나쁨은 판정하지 않는다.
+pub fn changes(json: bool) {
+    let old = match sysmanage::load_baseline() {
+        Ok(v) => v,
+        Err(e) => {
+            println!("✗ {e}");
+            return;
+        }
+    };
+    let new = sysmanage::collect();
+    let c = sysmanage::diff(&old, &new);
+
+    if json {
+        match serde_json::to_string_pretty(&c) {
+            Ok(t) => println!("{t}"),
+            Err(e) => eprintln!("✗ 직렬화 실패: {e}"),
+        }
+        return;
+    }
+
+    println!("=== 기준점 이후 달라진 것 (읽기 전용) ===");
+    println!("기준점: {}", c.baseline_at);
+    println!("지금  : {}\n", c.current_at);
+    if c.host_mismatch {
+        println!(
+            "⚠ 기준점이 다른 PC 에서 만들어졌습니다({} → {}). 비교가 의미 없을 수 있습니다.\n",
+            old.host, new.host
+        );
+    }
+
+    if c.is_empty() {
+        println!("달라진 것이 없습니다.");
+        return;
+    }
+
+    if !c.startup_added.is_empty() {
+        println!(
+            "--- 새로 생긴 시작 프로그램 {}개 ---",
+            c.startup_added.len()
+        );
+        for s in &c.startup_added {
+            println!("  + {}", s.name);
+            println!("      {}", s.command);
+        }
+        println!();
+    }
+    if !c.startup_removed.is_empty() {
+        println!("--- 없어진 시작 프로그램 {}개 ---", c.startup_removed.len());
+        for s in &c.startup_removed {
+            println!("  - {}", s.name);
+        }
+        println!();
+    }
+    if !c.services_changed.is_empty() {
+        println!("--- 상태가 바뀐 서비스 {}개 ---", c.services_changed.len());
+        for s in &c.services_changed {
+            println!(
+                "  {} {} → {}  {}",
+                if s.auto_now_stopped { "!" } else { " " },
+                s.before.label(),
+                s.after.label(),
+                s.display_name
+            );
+        }
+        if c.services_changed.iter().any(|s| s.auto_now_stopped) {
+            println!("  (! = 자동 시작 서비스인데 지금 멈춰 있음)");
+        }
+        println!();
+    }
+    if !c.services_added.is_empty() {
+        println!("--- 새로 생긴 서비스 {}개 ---", c.services_added.len());
+        for s in &c.services_added {
+            println!("  + {s}");
+        }
+        println!();
+    }
+    if !c.services_removed.is_empty() {
+        println!("--- 없어진 서비스 {}개 ---", c.services_removed.len());
+        for s in &c.services_removed {
+            println!("  - {s}");
+        }
+        println!();
+    }
+    if !c.disks.is_empty() {
+        println!("--- 디스크 여유 공간 ---");
+        for d in &c.disks {
+            println!(
+                "  {} {:.1}GB → {:.1}GB ({:+.1}GB)",
+                d.drive, d.free_before_gb, d.free_after_gb, d.delta_gb
+            );
+        }
+        println!();
+    }
+    if !c.network.is_empty() {
+        println!("--- 네트워크 ---");
+        for n in &c.network {
+            let label = |on: bool| if on { "연결" } else { "끊김" };
+            println!(
+                "  {} : {} → {}",
+                n.name,
+                label(n.was_connected),
+                label(n.now_connected)
+            );
+        }
+        println!();
+    }
+    if !c.not_compared.is_empty() {
+        println!("--- 비교하지 못한 항목 (변화 없음이 아닙니다) ---");
+        for n in &c.not_compared {
+            println!("  ? {n}");
+        }
+        println!();
+    }
+    println!("바뀐 것만 보여줍니다. 좋고 나쁨은 판정하지 않습니다.");
+}

@@ -395,9 +395,425 @@ fn shorten_home(path: &str) -> String {
     }
 }
 
+// --- 변화 추적 ------------------------------------------------------------------
+//
+// "이 PC 왜 느려졌지?"에 답하려면 지금 상태만으로는 부족하다. 기준점을 저장해 두고
+// 그때와 무엇이 달라졌는지를 본다. 좋고 나쁨은 판정하지 않는다 — 바뀐 것만 보여준다.
+
+pub const BASELINE_FILE: &str = "velox_system_baseline.json";
+/// 이보다 작은 여유 공간 변화는 일상적인 흔들림으로 보고 보고하지 않는다.
+pub const DISK_NOISE_GB: f64 = 1.0;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ServiceChange {
+    pub display_name: String,
+    pub before: ServiceState,
+    pub after: ServiceState,
+    /// 자동 시작 서비스가 멈춘 경우 — 사람이 먼저 볼 만한 변화.
+    pub auto_now_stopped: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct DiskChange {
+    pub drive: String,
+    pub free_before_gb: f64,
+    pub free_after_gb: f64,
+    /// 양수 = 여유 공간이 늘었다, 음수 = 줄었다.
+    pub delta_gb: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NetChange {
+    pub name: String,
+    pub was_connected: bool,
+    pub now_connected: bool,
+}
+
+/// 기준점과 지금의 차이.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct SystemChanges {
+    pub baseline_at: String,
+    pub current_at: String,
+    /// 기준점을 다른 PC 에서 만들었다 — 비교 자체가 의미 없을 수 있다.
+    pub host_mismatch: bool,
+    pub startup_added: Vec<StartupItem>,
+    pub startup_removed: Vec<StartupItem>,
+    pub services_added: Vec<String>,
+    pub services_removed: Vec<String>,
+    pub services_changed: Vec<ServiceChange>,
+    pub disks: Vec<DiskChange>,
+    pub network: Vec<NetChange>,
+    /// 한쪽이라도 못 읽어서 **비교하지 못한** 항목과 이유. "변화 없음"과 다르다.
+    pub not_compared: Vec<String>,
+}
+
+impl SystemChanges {
+    /// 보고할 변화가 하나도 없는가. 비교하지 못한 항목이 있으면 "없다"고 말하지 않는다.
+    pub fn is_empty(&self) -> bool {
+        self.startup_added.is_empty()
+            && self.startup_removed.is_empty()
+            && self.services_added.is_empty()
+            && self.services_removed.is_empty()
+            && self.services_changed.is_empty()
+            && self.disks.is_empty()
+            && self.network.is_empty()
+            && self.not_compared.is_empty()
+    }
+}
+
+/// 두 값이 모두 읽혔을 때만 비교한다. 아니면 이유를 `not_compared` 에 남긴다.
+fn both<'a, T>(
+    what: &str,
+    old: &'a Readout<T>,
+    new: &'a Readout<T>,
+    not_compared: &mut Vec<String>,
+) -> Option<(&'a T, &'a T)> {
+    match (old, new) {
+        (Readout::Ok(a), Readout::Ok(b)) => Some((a, b)),
+        (Readout::Unavailable(r), _) => {
+            not_compared.push(format!("{what}: 기준점에서 읽지 못했음 — {r}"));
+            None
+        }
+        (_, Readout::Unavailable(r)) => {
+            not_compared.push(format!("{what}: 지금 읽지 못함 — {r}"));
+            None
+        }
+    }
+}
+
+/// 기준점(`old`)과 지금(`new`)을 비교한다. 순수 함수다 — 디스크·WMI 를 건드리지 않는다.
+pub fn diff(old: &SystemView, new: &SystemView) -> SystemChanges {
+    let mut c = SystemChanges {
+        baseline_at: old.collected_at.clone(),
+        current_at: new.collected_at.clone(),
+        host_mismatch: !old.host.is_empty()
+            && !new.host.is_empty()
+            && !old.host.eq_ignore_ascii_case(&new.host),
+        ..Default::default()
+    };
+
+    if let Some((a, b)) = both(
+        "시작 프로그램",
+        &old.startup,
+        &new.startup,
+        &mut c.not_compared,
+    ) {
+        // 이름+명령이 같으면 같은 항목이다. 위치만 달라진 것은 변화로 보지 않는다.
+        let key = |s: &StartupItem| (s.name.to_lowercase(), s.command.to_lowercase());
+        c.startup_added = b
+            .iter()
+            .filter(|x| !a.iter().any(|y| key(y) == key(x)))
+            .cloned()
+            .collect();
+        c.startup_removed = a
+            .iter()
+            .filter(|x| !b.iter().any(|y| key(y) == key(x)))
+            .cloned()
+            .collect();
+    }
+
+    if let Some((a, b)) = both("서비스", &old.services, &new.services, &mut c.not_compared) {
+        for s in b {
+            match a.iter().find(|x| x.name.eq_ignore_ascii_case(&s.name)) {
+                None => c.services_added.push(s.display_name.clone()),
+                Some(prev) if prev.state != s.state => c.services_changed.push(ServiceChange {
+                    display_name: s.display_name.clone(),
+                    before: prev.state,
+                    after: s.state,
+                    auto_now_stopped: s.auto_but_stopped,
+                }),
+                Some(_) => {}
+            }
+        }
+        c.services_removed = a
+            .iter()
+            .filter(|x| !b.iter().any(|y| y.name.eq_ignore_ascii_case(&x.name)))
+            .map(|x| x.display_name.clone())
+            .collect();
+        // 자동인데 멈춘 것을 맨 위로.
+        c.services_changed
+            .sort_by_key(|s| std::cmp::Reverse(s.auto_now_stopped));
+    }
+
+    if let Some((a, b)) = both("디스크", &old.disks, &new.disks, &mut c.not_compared) {
+        for d in b {
+            if let Some(prev) = a.iter().find(|x| x.drive.eq_ignore_ascii_case(&d.drive)) {
+                let delta = d.free_gb - prev.free_gb;
+                if delta.abs() >= DISK_NOISE_GB {
+                    c.disks.push(DiskChange {
+                        drive: d.drive.clone(),
+                        free_before_gb: prev.free_gb,
+                        free_after_gb: d.free_gb,
+                        delta_gb: (delta * 10.0).round() / 10.0,
+                    });
+                }
+            }
+        }
+    }
+
+    if let Some((a, b)) = both("네트워크", &old.network, &new.network, &mut c.not_compared) {
+        for n in b {
+            if let Some(prev) = a.iter().find(|x| x.name == n.name)
+                && prev.connected != n.connected
+            {
+                c.network.push(NetChange {
+                    name: n.name.clone(),
+                    was_connected: prev.connected,
+                    now_connected: n.connected,
+                });
+            }
+        }
+    }
+    c
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BaselineError {
+    /// 저장된 기준점이 없다.
+    Missing,
+    /// 파일은 있는데 읽을 수 없다.
+    Corrupt(String),
+    Io(String),
+}
+
+impl std::fmt::Display for BaselineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BaselineError::Missing => write!(
+                f,
+                "저장된 기준점이 없습니다.\n  다음 행동: 상태가 정상일 때 `velox system save` 로 기준점을 먼저 만드세요."
+            ),
+            BaselineError::Corrupt(e) => write!(
+                f,
+                "기준점 파일을 읽을 수 없습니다: {e}\n  다음 행동: `velox system save` 로 새 기준점을 만드세요."
+            ),
+            BaselineError::Io(e) => write!(
+                f,
+                "기준점을 저장하지 못했습니다: {e}\n  다음 행동: 디스크 공간과 권한을 확인하세요."
+            ),
+        }
+    }
+}
+
+fn baseline_path() -> std::path::PathBuf {
+    crate::paths::resolve(BASELINE_FILE)
+}
+
+/// 지금 상태를 기준점으로 저장한다(원자적). 이전 기준점은 교체된다.
+pub fn save_baseline(view: &SystemView) -> Result<(), BaselineError> {
+    save_baseline_to(&baseline_path(), view)
+}
+
+fn save_baseline_to(p: &std::path::Path, view: &SystemView) -> Result<(), BaselineError> {
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| BaselineError::Io(e.to_string()))?;
+    }
+    let json = serde_json::to_string_pretty(view).map_err(|e| BaselineError::Io(e.to_string()))?;
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| BaselineError::Io(e.to_string()))?;
+    std::fs::rename(&tmp, p).map_err(|e| BaselineError::Io(e.to_string()))
+}
+
+pub fn load_baseline() -> Result<SystemView, BaselineError> {
+    load_baseline_from(&baseline_path())
+}
+
+fn load_baseline_from(p: &std::path::Path) -> Result<SystemView, BaselineError> {
+    match std::fs::read_to_string(p) {
+        Ok(raw) => serde_json::from_str(&raw).map_err(|e| BaselineError::Corrupt(e.to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(BaselineError::Missing),
+        Err(e) => Err(BaselineError::Io(e.to_string())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn startup(name: &str, cmd: &str) -> StartupItem {
+        StartupItem {
+            name: name.into(),
+            command: cmd.into(),
+            location: "HKCU".into(),
+        }
+    }
+
+    fn disk(drive: &str, free: f64) -> DiskVolume {
+        DiskVolume {
+            drive: drive.into(),
+            label: String::new(),
+            total_gb: 500.0,
+            free_gb: free,
+            used_pct: (500.0 - free) / 500.0 * 100.0,
+        }
+    }
+
+    fn net(name: &str, connected: bool) -> NetAdapter {
+        NetAdapter {
+            name: name.into(),
+            connected,
+            status: String::new(),
+        }
+    }
+
+    #[test]
+    fn identical_views_have_no_changes() {
+        let v = view(
+            Readout::Ok(vec![svc("A", ServiceState::Running, "Auto")]),
+            Readout::Ok(vec![disk("C:", 100.0)]),
+            Readout::Ok(vec![net("이더넷", true)]),
+        );
+        let c = diff(&v, &v);
+        assert!(c.is_empty(), "{c:?}");
+        assert!(!c.host_mismatch);
+    }
+
+    #[test]
+    fn new_and_removed_startup_items_are_reported() {
+        let mut old = view(
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![]),
+        );
+        old.startup = Readout::Ok(vec![startup("Keep", "a.exe"), startup("Gone", "g.exe")]);
+        let mut new = old.clone();
+        new.startup = Readout::Ok(vec![startup("Keep", "A.EXE"), startup("New", "n.exe")]);
+
+        let c = diff(&old, &new);
+        assert_eq!(c.startup_added.len(), 1);
+        assert_eq!(c.startup_added[0].name, "New");
+        assert_eq!(c.startup_removed.len(), 1);
+        assert_eq!(c.startup_removed[0].name, "Gone");
+    }
+
+    #[test]
+    fn service_state_changes_put_stopped_auto_services_first() {
+        let old = view(
+            Readout::Ok(vec![
+                svc("Manual", ServiceState::Stopped, "Manual"),
+                svc("Auto", ServiceState::Running, "Auto"),
+                svc("Same", ServiceState::Running, "Auto"),
+                svc("Removed", ServiceState::Running, "Auto"),
+            ]),
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![]),
+        );
+        let new = view(
+            Readout::Ok(vec![
+                svc("Manual", ServiceState::Running, "Manual"),
+                svc("Auto", ServiceState::Stopped, "Auto"),
+                svc("Same", ServiceState::Running, "Auto"),
+                svc("Added", ServiceState::Running, "Auto"),
+            ]),
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![]),
+        );
+        let c = diff(&old, &new);
+        assert_eq!(c.services_changed.len(), 2);
+        assert_eq!(c.services_changed[0].display_name, "Auto");
+        assert!(c.services_changed[0].auto_now_stopped);
+        assert_eq!(c.services_added, ["Added"]);
+        assert_eq!(c.services_removed, ["Removed"]);
+    }
+
+    #[test]
+    fn small_disk_wobble_is_ignored_but_real_change_is_reported() {
+        let old = view(
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![disk("C:", 100.0), disk("D:", 300.0)]),
+            Readout::Ok(vec![]),
+        );
+        let new = view(
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![disk("C:", 99.6), disk("D:", 250.0)]),
+            Readout::Ok(vec![]),
+        );
+        let c = diff(&old, &new);
+        assert_eq!(c.disks.len(), 1, "0.4GB 는 흔들림이다");
+        assert_eq!(c.disks[0].drive, "D:");
+        assert_eq!(c.disks[0].delta_gb, -50.0);
+    }
+
+    #[test]
+    fn network_connection_flips_are_reported() {
+        let old = view(
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![net("이더넷", true), net("Wi-Fi", false)]),
+        );
+        let new = view(
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![net("이더넷", false), net("Wi-Fi", false)]),
+        );
+        let c = diff(&old, &new);
+        assert_eq!(c.network.len(), 1);
+        assert!(c.network[0].was_connected && !c.network[0].now_connected);
+    }
+
+    /// **못 읽은 것을 "변화 없음"으로 보고하면 안 된다.**
+    #[test]
+    fn unreadable_sections_are_not_compared_and_not_called_unchanged() {
+        let old = view(
+            Readout::Ok(vec![svc("A", ServiceState::Running, "Auto")]),
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![]),
+        );
+        let new = view(
+            Readout::Unavailable("권한 없음".into()),
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![]),
+        );
+        let c = diff(&old, &new);
+        assert!(c.services_changed.is_empty());
+        assert_eq!(c.not_compared.len(), 1);
+        assert!(c.not_compared[0].contains("서비스"));
+        assert!(c.not_compared[0].contains("권한 없음"));
+        assert!(
+            !c.is_empty(),
+            "비교 못 한 항목이 있으면 '변화 없음'이 아니다"
+        );
+    }
+
+    #[test]
+    fn baseline_from_another_pc_is_flagged() {
+        let old = view(
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![]),
+            Readout::Ok(vec![]),
+        );
+        let mut new = old.clone();
+        new.host = "OTHER-PC".into();
+        assert!(diff(&old, &new).host_mismatch);
+    }
+
+    #[test]
+    fn baseline_roundtrip_and_error_states() {
+        let dir = std::env::temp_dir().join(format!("velox-baseline-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let p = dir.join(BASELINE_FILE);
+
+        assert_eq!(load_baseline_from(&p), Err(BaselineError::Missing));
+
+        let v = view(
+            Readout::Ok(vec![svc("A", ServiceState::Running, "Auto")]),
+            Readout::Unavailable("이유".into()),
+            Readout::Ok(vec![net("이더넷", true)]),
+        );
+        save_baseline_to(&p, &v).unwrap();
+        assert_eq!(
+            load_baseline_from(&p).unwrap(),
+            v,
+            "못 읽은 이유까지 보존된다"
+        );
+
+        std::fs::write(&p, "{ broken").unwrap();
+        assert!(matches!(
+            load_baseline_from(&p),
+            Err(BaselineError::Corrupt(_))
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn view(
         services: Readout<Vec<Service>>,

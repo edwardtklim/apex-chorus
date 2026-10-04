@@ -234,6 +234,13 @@ enum SystemCommands {
         #[arg(long)]
         json: bool,
     },
+    /// 지금 상태를 기준점으로 저장 (나중에 changes 로 비교)
+    Save,
+    /// 기준점 이후 달라진 것 — 시작 프로그램·서비스·디스크·네트워크
+    Changes {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -705,6 +712,8 @@ async fn main() {
             SystemCommands::Status { json } => system::status(json),
             SystemCommands::Services { stopped, json } => system::services(stopped, json),
             SystemCommands::Startup { json } => system::startup(json),
+            SystemCommands::Save => system::save_baseline(),
+            SystemCommands::Changes { json } => system::changes(json),
         },
         Commands::Metrics { action } => match action {
             MetricsCommands::Summary { json } => metrics::summary(json),
