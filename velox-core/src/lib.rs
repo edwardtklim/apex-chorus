@@ -23,6 +23,7 @@ pub mod ledger;
 pub mod logging;
 pub mod metrics;
 pub mod paths;
+pub mod plans;
 pub mod policy;
 pub mod pricing;
 pub mod privacy;

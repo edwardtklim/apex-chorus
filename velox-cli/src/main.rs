@@ -11,6 +11,7 @@ mod fps;
 mod fpscheck;
 mod gpu;
 mod metrics;
+mod plans;
 mod project;
 mod report;
 mod snapshot;
@@ -149,6 +150,68 @@ enum Commands {
     System {
         #[command(subcommand)]
         action: SystemCommands,
+    },
+    /// AI 구독·API 계정 기록 — 플랜·금액·갱신일·주 용도·예산 (직접 입력, 결제 실행 안 함)
+    Plans {
+        #[command(subcommand)]
+        action: PlansCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum PlansCommands {
+    /// 전체 기록 + 월 고정 지출(구독만) + API 예산 대비 추정 사용액
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// 기록 추가(같은 id 면 교체). 구독과 API 는 따로 등록합니다
+    Add {
+        /// 제공자 이름 (claude, chatgpt, gemini ...)
+        #[arg(long)]
+        provider: String,
+        /// subscription(정액 구독) 또는 api(사용량 과금)
+        #[arg(long)]
+        kind: String,
+        /// 플랜 이름 (Plus, Max ...)
+        #[arg(long, default_value = "")]
+        plan: String,
+        /// 주기당 금액. 모르면 생략 — 0 으로 채우지 않습니다
+        #[arg(long)]
+        amount: Option<f64>,
+        /// 통화 코드 (USD, KRW ...)
+        #[arg(long, default_value = "USD")]
+        currency: String,
+        /// monthly / yearly / none
+        #[arg(long, default_value = "none")]
+        cycle: String,
+        /// 다음 갱신일 YYYY-MM-DD
+        #[arg(long)]
+        renews: Option<String>,
+        /// 이 AI 를 주로 무엇에 쓰는지
+        #[arg(long, default_value = "")]
+        purpose: String,
+        /// (API 전용) 월 예산 — 넘으면 알려줍니다. 결제를 막지는 않습니다
+        #[arg(long)]
+        budget: Option<f64>,
+        #[arg(long, default_value = "")]
+        note: String,
+        /// 같은 제공자·종류를 여러 개 등록할 때 직접 지정
+        #[arg(long)]
+        id: Option<String>,
+    },
+    /// 기록 삭제
+    Remove { id: String },
+    /// 값이 아직 맞다고 확인 (갱신일을 함께 고칠 수 있음)
+    Confirm {
+        id: String,
+        #[arg(long)]
+        renews: Option<String>,
+    },
+    /// N일 안에 갱신되는 구독 (기본 14일)
+    Upcoming {
+        #[arg(long, default_value_t = 14)]
+        days: i64,
     },
 }
 
@@ -593,6 +656,37 @@ async fn main() {
                 note,
                 json,
             } => report::repair(&before, &after, out.as_deref(), &machine, &note, json),
+        },
+        Commands::Plans { action } => match action {
+            PlansCommands::List { json } => plans::list(json),
+            PlansCommands::Add {
+                provider,
+                kind,
+                plan,
+                amount,
+                currency,
+                cycle,
+                renews,
+                purpose,
+                budget,
+                note,
+                id,
+            } => plans::add(plans::AddArgs {
+                provider,
+                kind,
+                plan,
+                amount,
+                currency,
+                cycle,
+                renews,
+                purpose,
+                budget,
+                note,
+                id,
+            }),
+            PlansCommands::Remove { id } => plans::remove(&id),
+            PlansCommands::Confirm { id, renews } => plans::confirm(&id, renews.as_deref()),
+            PlansCommands::Upcoming { days } => plans::upcoming(days),
         },
         Commands::System { action } => match action {
             SystemCommands::Status { json } => system::status(json),
