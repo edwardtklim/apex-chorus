@@ -172,6 +172,48 @@ pub fn chat_delete(id: &str) {
     }
 }
 
+/// 대화를 Markdown 파일로 내보낸다. `out` 이 없으면 APEX 리포트 폴더에 저장한다.
+///
+/// 이미 있는 파일은 덮어쓰지 않는다 — 노트 폴더(Obsidian Vault 등)를 지정했을 때
+/// 사용자가 고친 노트를 날리지 않기 위해서다. 덮어쓰려면 `--force`.
+pub fn chat_export(id: &str, out: Option<&str>, force: bool) {
+    let c = match velox_core::conversation::load(id) {
+        Ok(c) => c,
+        Err(e) => {
+            println!("✗ {e}");
+            return;
+        }
+    };
+    let path = match out {
+        Some(p) => std::path::PathBuf::from(p),
+        None => velox_core::paths::report_file(&format!("chat-{}.md", c.meta.id)),
+    };
+    if path.exists() && !force {
+        println!("✗ 이미 파일이 있습니다: {}", path.display());
+        println!("  다음 행동: 다른 경로를 --out 으로 주거나, 덮어쓰려면 --force 를 붙이세요.");
+        return;
+    }
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty())
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        println!("✗ 폴더를 만들지 못했습니다 ({}): {e}", dir.display());
+        return;
+    }
+    match std::fs::write(&path, velox_core::conversation::to_markdown(&c)) {
+        Ok(()) => {
+            println!("✓ 내보냈습니다: {}", path.display());
+            println!(
+                "  메시지 {}개 · 제목 {}",
+                c.meta.message_count, c.meta.title
+            );
+        }
+        Err(e) => {
+            println!("✗ 저장하지 못했습니다 ({}): {e}", path.display());
+            println!("  다음 행동: 경로와 쓰기 권한을 확인하세요.");
+        }
+    }
+}
+
 /// 정책 게이트([`execute_agent`])를 통과해 AI를 호출한다. 거부되면 이유(+동의 방법)를
 /// 출력하고 `None`. 대표 제품 경로(ask/diagnose/doctor)가 공유하는 진입점.
 pub async fn gated_text(

@@ -487,6 +487,16 @@ enum ChatCommands {
     Show { id: String },
     /// 대화 삭제 (되돌릴 수 없음)
     Delete { id: String },
+    /// 대화를 Markdown 파일로 내보내기 (노트 앱으로 옮길 때). 기존 파일은 덮어쓰지 않음
+    Export {
+        id: String,
+        /// 저장할 경로. 생략하면 APEX 리포트 폴더
+        #[arg(long)]
+        out: Option<String>,
+        /// 이미 있는 파일을 덮어쓴다
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -592,6 +602,9 @@ async fn main() {
                 ChatCommands::List => chorus::chat_list(),
                 ChatCommands::Show { id } => chorus::chat_show(&id),
                 ChatCommands::Delete { id } => chorus::chat_delete(&id),
+                ChatCommands::Export { id, out, force } => {
+                    chorus::chat_export(&id, out.as_deref(), force)
+                }
             },
             ChorusCommands::Models => {
                 chorus::show_models();

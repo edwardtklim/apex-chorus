@@ -315,9 +315,121 @@ pub fn context_text(c: &Conversation, max_messages: usize, max_chars: usize) -> 
     }
 }
 
+/// 대화를 Markdown 문서로 만든다 (NOTEX·Obsidian 으로 넘기는 다리).
+///
+/// 노트로 옮겨도 **누가 한 말인지**를 잃지 않게 한다: 메시지마다 시각과,
+/// AI 답이면 어떤 provider/model 이 만들었는지를 적는다. 길이 제한으로 잘린
+/// 메시지는 잘렸다고 표시한다 — 일부를 전문처럼 보이게 하지 않는다.
+/// 본문은 저장할 때 이미 레닥션됐으므로 여기서 새로 노출되는 비밀값은 없다.
+pub fn to_markdown(c: &Conversation) -> String {
+    let mut models: Vec<String> = Vec::new();
+    for m in &c.messages {
+        if let (Some(p), Some(mo)) = (&m.provider, &m.model) {
+            let tag = format!("{p}/{mo}");
+            if !models.contains(&tag) {
+                models.push(tag);
+            }
+        }
+    }
+
+    let mut s = String::new();
+    // front matter — Obsidian 등이 그대로 읽는다. 값에 따옴표·줄바꿈이 섞여도 깨지지 않게 정리한다.
+    let yaml = |v: &str| v.replace('"', "'").replace(['\r', '\n'], " ");
+    s.push_str("---\n");
+    s.push_str(&format!("title: \"{}\"\n", yaml(&c.meta.title)));
+    s.push_str(&format!("conversation_id: {}\n", c.meta.id));
+    s.push_str(&format!("created: {}\n", c.meta.created_at));
+    s.push_str(&format!("updated: {}\n", c.meta.updated_at));
+    s.push_str(&format!("messages: {}\n", c.messages.len()));
+    s.push_str(&format!(
+        "models: [{}]\n",
+        models
+            .iter()
+            .map(|m| format!("\"{}\"", yaml(m)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    s.push_str("source: APEX Velox conversation export\n");
+    s.push_str("---\n\n");
+
+    s.push_str(&format!(
+        "# {}\n\n",
+        c.meta.title.replace(['\r', '\n'], " ")
+    ));
+    s.push_str(
+        "> AI 가 생성한 답이 포함된 대화 기록입니다. 확정된 결정이 아니라 **원문**입니다.\n\n",
+    );
+
+    if c.messages.is_empty() {
+        s.push_str("_(메시지 없음)_\n");
+        return s;
+    }
+    for m in &c.messages {
+        let who = match (m.role, &m.provider, &m.model) {
+            (Role::Assistant, Some(p), Some(mo)) => format!("AI — {p} / {mo}"),
+            (Role::Assistant, _, _) => "AI — 모델 미상".to_string(),
+            (Role::User, _, _) => "나".to_string(),
+        };
+        s.push_str(&format!("## {who}\n\n"));
+        s.push_str(&format!("_{}_", m.at));
+        if m.truncated {
+            s.push_str(" · **저장 시 길이 제한으로 잘린 메시지**");
+        }
+        s.push_str("\n\n");
+        s.push_str(m.text.trim_end());
+        s.push_str("\n\n");
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markdown_export_keeps_who_said_what() {
+        let mut c = Conversation::default();
+        c.meta.id = "abc-1".into();
+        c.meta.title = "CPU \"연구\"\n둘째 줄".into();
+        c.meta.created_at = "2026-10-05T00:00:00Z".into();
+        c.meta.updated_at = "2026-10-05T01:00:00Z".into();
+        let msg = |role, text: &str, pm: Option<(&str, &str)>, truncated| Message {
+            role,
+            at: "2026-10-05T00:30:00Z".into(),
+            text: text.into(),
+            provider: pm.map(|x| x.0.to_string()),
+            model: pm.map(|x| x.1.to_string()),
+            truncated,
+        };
+        c.messages = vec![
+            msg(Role::User, "왜 느려?", None, false),
+            msg(Role::Assistant, "답 A", Some(("claude", "claude-x")), false),
+            msg(Role::Assistant, "답 B", Some(("gpt", "gpt-x")), true),
+        ];
+        let md = to_markdown(&c);
+
+        assert!(md.starts_with("---\n"), "front matter 로 시작해야 한다");
+        // 제목의 따옴표·줄바꿈이 front matter 를 깨뜨리지 않는다.
+        assert!(md.contains("title: \"CPU '연구' 둘째 줄\"\n"), "{md}");
+        assert!(md.contains("models: [\"claude/claude-x\", \"gpt/gpt-x\"]"));
+        assert!(md.contains("## 나\n"));
+        assert!(md.contains("## AI — claude / claude-x"));
+        assert!(md.contains("## AI — gpt / gpt-x"));
+        assert!(md.contains("잘린 메시지"), "잘린 답은 표시해야 한다");
+        assert!(md.contains("원문"), "AI 생성물임을 밝혀야 한다");
+        // 순서 유지
+        assert!(md.find("답 A").unwrap() < md.find("답 B").unwrap());
+    }
+
+    #[test]
+    fn markdown_export_of_empty_conversation_is_valid() {
+        let mut c = Conversation::default();
+        c.meta.title = "빈 대화".into();
+        let md = to_markdown(&c);
+        assert!(md.contains("# 빈 대화"));
+        assert!(md.contains("메시지 없음"));
+        assert!(md.contains("models: []"));
+    }
 
     /// 테스트는 서로의 데이터 디렉터리를 건드리지 않아야 한다.
     /// `paths` 는 프로세스당 한 번만 해석되므로, 디렉터리 자체는 공유하되
