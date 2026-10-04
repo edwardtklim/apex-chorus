@@ -26,6 +26,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Clone)]
 struct AppState {
     session_token: String,
+    chat_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// 사이트와 앱이 공유하는 단일 UI 파일.
@@ -39,6 +40,7 @@ async fn main() {
     velox_core::credentials::migrate_dotenv(std::path::Path::new(".env"));
     let addr = std::env::var("VELOX_ADDR").unwrap_or_else(|_| "127.0.0.1:7878".into());
     let state = AppState {
+        chat_lock: Arc::new(tokio::sync::Mutex::new(())),
         session_token: std::env::var("VELOX_SESSION_TOKEN")
             .unwrap_or_else(|_| format!("manual-{}", std::process::id())),
     };
@@ -46,6 +48,11 @@ async fn main() {
         .route("/", get(index))
         .route("/health", get(health))
         .route("/snapshot", get(snapshot))
+        .route("/system/status", get(system_status))
+        .route("/chat", get(chat_list).post(chat_create))
+        .route("/chat/options", get(chat_options))
+        .route("/chat/:id", get(chat_load).delete(chat_delete))
+        .route("/chat/:id/messages", post(chat_send))
         .route("/report/health", get(health_report))
         .route("/report/benchmark", post(cpu_benchmark))
         .route("/keys", post(save_keys))
@@ -121,6 +128,231 @@ async fn health() -> &'static str {
 /// 현재 앱 버전.
 async fn version() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "version": APP_VERSION }))
+}
+
+async fn system_status() -> Result<Json<serde_json::Value>, StatusCode> {
+    tokio::task::spawn_blocking(|| {
+        let view = velox_core::sysmanage::collect();
+        let mut json = serde_json::to_value(&view).expect("SystemView serialization");
+        json["attention"] = serde_json::json!(view.attention());
+        Json(json)
+    })
+    .await
+    .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
+}
+
+type ChatResult = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>;
+
+fn chat_error(status: StatusCode, message: impl ToString) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        status,
+        Json(
+            serde_json::json!({"error": velox_core::project::redact_secrets(&message.to_string())}),
+        ),
+    )
+}
+
+fn conversation_error(
+    error: velox_core::conversation::ConvError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    use velox_core::conversation::ConvError;
+    let status = match &error {
+        ConvError::NotFound(_) => StatusCode::NOT_FOUND,
+        ConvError::InvalidId(_) | ConvError::EmptyText => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    chat_error(status, error)
+}
+
+async fn chat_list() -> Json<serde_json::Value> {
+    Json(serde_json::json!({"conversations": velox_core::conversation::list()}))
+}
+
+async fn chat_options() -> Json<serde_json::Value> {
+    use velox_core::{ai, guidance::Problem, policy, privacy::ContextScope};
+    let providers: Vec<_> = BUILTIN_PROVIDERS
+        .iter()
+        .map(|p| {
+            let key = ai::has_key(p);
+            let status = policy::policy_status(p);
+            let problem = if !key {
+                Some(Problem::ProviderKeyMissing {
+                    provider: (*p).into(),
+                })
+            } else if !status.cloud_allowed {
+                Some(Problem::ConsentMissing {
+                    provider: (*p).into(),
+                    needed_scope: ContextScope::Minimal,
+                })
+            } else {
+                None
+            };
+            serde_json::json!({"provider":p, "model":ai::model_name(p), "has_key":key,
+            "policy":status, "guidance":problem.map(|x| x.guidance().render_plain())})
+        })
+        .collect();
+    Json(serde_json::json!({"providers":providers}))
+}
+
+#[derive(Deserialize)]
+struct ChatCreate {
+    title: String,
+}
+
+async fn chat_create(State(state): State<AppState>, Json(req): Json<ChatCreate>) -> ChatResult {
+    let _guard = state.chat_lock.try_lock().map_err(|_| {
+        chat_error(
+            StatusCode::CONFLICT,
+            "응답 처리 중입니다. 완료 후 다시 시도하세요.",
+        )
+    })?;
+    let conv = velox_core::conversation::create(&req.title, "", "").map_err(conversation_error)?;
+    Ok(Json(serde_json::json!(conv)))
+}
+
+async fn chat_load(Path(id): Path<String>) -> ChatResult {
+    let conv = velox_core::conversation::load(&id).map_err(conversation_error)?;
+    Ok(Json(serde_json::json!(conv)))
+}
+
+async fn chat_delete(State(state): State<AppState>, Path(id): Path<String>) -> ChatResult {
+    let _guard = state
+        .chat_lock
+        .try_lock()
+        .map_err(|_| chat_error(StatusCode::CONFLICT, "응답 처리 중에는 삭제할 수 없습니다."))?;
+    velox_core::conversation::delete(&id).map_err(conversation_error)?;
+    Ok(Json(serde_json::json!({"ok":true})))
+}
+
+#[derive(Deserialize)]
+struct ChatSend {
+    provider: String,
+    model: String,
+    text: String,
+}
+
+fn chat_evidence(conv: &velox_core::conversation::Conversation, text: &str) -> String {
+    use velox_core::evidence::{
+        EvidenceBundle, EvidenceData, EvidenceId, EvidenceItem, EvidenceSource,
+    };
+    use velox_core::privacy::ContextScope;
+    // Only explicitly submitted text and bounded history; no implicit device/project collection.
+    let history: String = velox_core::conversation::context_text(conv, 12, 6000)
+        .chars()
+        .take(6000)
+        .collect();
+    let items = [
+        ("chat.history", "이전 대화", history),
+        ("chat.question", "사용자 질문", text.to_owned()),
+    ]
+    .into_iter()
+    .map(|(id, name, value)| EvidenceItem {
+        id: EvidenceId(id.into()),
+        source: EvidenceSource::User,
+        sensitivity: ContextScope::Minimal,
+        data: EvidenceData::Fact {
+            name: name.into(),
+            value: velox_core::project::redact_secrets(&value),
+        },
+    })
+    .collect();
+    EvidenceBundle::new(ContextScope::Minimal, items)
+        .expect("fixed chat evidence schema")
+        .to_prompt()
+}
+
+async fn chat_send(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ChatSend>,
+) -> ChatResult {
+    use velox_core::{conversation as conv, guidance::Problem, policy, privacy::ContextScope};
+    let _guard = state.chat_lock.try_lock().map_err(|_| {
+        chat_error(
+            StatusCode::CONFLICT,
+            "다른 응답을 처리 중입니다. 완료 후 다시 시도하세요.",
+        )
+    })?;
+    if !BUILTIN_PROVIDERS.contains(&req.provider.as_str())
+        || req.text.trim().is_empty()
+        || req.text.chars().count() > conv::MAX_TEXT_CHARS
+    {
+        return Err(chat_error(
+            StatusCode::BAD_REQUEST,
+            "제공자를 직접 선택하고 1~20,000자의 질문을 입력하세요.",
+        ));
+    }
+    if req.model != velox_core::ai::model_name(&req.provider) {
+        return Err(chat_error(
+            StatusCode::CONFLICT,
+            "모델 설정이 변경됐습니다. 모델 목록을 새로고침하고 다시 선택하세요.",
+        ));
+    }
+    let existing = conv::load(&id).map_err(conversation_error)?;
+    let request = policy::AgentRequest {
+        provider: req.provider.clone(),
+        purpose: policy::AgentPurpose::Other,
+        prompt: chat_evidence(&existing, &req.text),
+        scope: ContextScope::Minimal,
+        requested_tools: Default::default(),
+    };
+    if let Err(e) = policy::authorize(&request) {
+        return Err(chat_error(
+            StatusCode::FORBIDDEN,
+            Problem::from(&e).guidance().render_plain(),
+        ));
+    }
+    if !velox_core::ai::has_key(&req.provider) {
+        return Err(chat_error(
+            StatusCode::PRECONDITION_FAILED,
+            Problem::ProviderKeyMissing {
+                provider: req.provider,
+            }
+            .guidance()
+            .render_plain(),
+        ));
+    }
+    let response = match tokio::time::timeout(
+        std::time::Duration::from_secs(95),
+        policy::execute_agent(request),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            return Err(chat_error(
+                StatusCode::BAD_GATEWAY,
+                Problem::from(&e).guidance().render_plain(),
+            ));
+        }
+        Err(_) => {
+            return Err(chat_error(
+                StatusCode::GATEWAY_TIMEOUT,
+                Problem::NetworkTimeout {
+                    provider: req.provider,
+                    seconds: 95,
+                }
+                .guidance()
+                .render_plain(),
+            ));
+        }
+    };
+    // Store only after success. If storage fails, preserve the answer in the response for the user.
+    let saved = conv::append(&id, conv::Role::User, &req.text, None, None).and_then(|_| {
+        conv::append(
+            &id,
+            conv::Role::Assistant,
+            &response.text,
+            Some(&req.provider),
+            Some(&req.model),
+        )
+    });
+    let warning = saved
+        .err()
+        .map(|e| velox_core::project::redact_secrets(&e.to_string()));
+    Ok(Json(
+        serde_json::json!({"conversation": conv::load(&id).ok(), "answer": velox_core::project::redact_secrets(&response.text), "warning": warning}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -534,7 +766,15 @@ struct ModelSetReq {
 }
 
 /// provider의 모델 ID 설정 — set_model이 검증(빈/제어문자/길이)을 강제한다.
-async fn models_set(Json(req): Json<ModelSetReq>) -> Json<serde_json::Value> {
+async fn models_set(
+    State(state): State<AppState>,
+    Json(req): Json<ModelSetReq>,
+) -> Json<serde_json::Value> {
+    let Ok(_guard) = state.chat_lock.try_lock() else {
+        return Json(
+            serde_json::json!({"ok": false, "error": "대화 응답 처리 중에는 모델을 바꿀 수 없습니다."}),
+        );
+    };
     match velox_core::ai::set_model(&req.provider, &req.model) {
         Ok(model) => Json(serde_json::json!({ "ok": true, "model": model })),
         Err(error) => Json(serde_json::json!({ "ok": false, "error": error })),
@@ -619,7 +859,15 @@ async fn usage_clear() -> Json<serde_json::Value> {
 }
 
 /// provider의 모델을 기본값으로 초기화.
-async fn models_reset(Path(provider): Path<String>) -> Json<serde_json::Value> {
+async fn models_reset(
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+) -> Json<serde_json::Value> {
+    let Ok(_guard) = state.chat_lock.try_lock() else {
+        return Json(
+            serde_json::json!({"ok": false, "error": "대화 응답 처리 중에는 모델을 바꿀 수 없습니다."}),
+        );
+    };
     match velox_core::ai::reset_model(&provider) {
         Ok(model) => Json(serde_json::json!({ "ok": true, "model": model })),
         Err(error) => Json(serde_json::json!({ "ok": false, "error": error })),
@@ -897,4 +1145,49 @@ async fn run_cmd(Path(cmd): Path<String>) -> String {
     tokio::task::spawn_blocking(move || run_velox(&args))
         .await
         .unwrap_or_else(|_| "실행 태스크 실패".into())
+}
+
+#[cfg(test)]
+mod chat_tests {
+    use super::*;
+    use velox_core::conversation::{Conversation, Message, Role};
+
+    #[test]
+    fn chat_payload_redacts_question_and_bounds_history() {
+        let secret = format!("sk-{}", "x".repeat(40));
+        let mut conversation = Conversation::default();
+        conversation.messages.push(Message {
+            role: Role::User,
+            at: "test".into(),
+            text: format!("{}{}", "한".repeat(25_000), "history-tail-must-not-fit"),
+            provider: None,
+            model: None,
+            truncated: false,
+        });
+        let prompt = chat_evidence(&conversation, &format!("question {secret}"));
+        assert!(!prompt.contains(&secret));
+        assert!(!prompt.contains("history-tail-must-not-fit"));
+        assert!(prompt.contains("chat.question"));
+        assert!(prompt.chars().count() < 6500);
+    }
+
+    #[tokio::test]
+    async fn concurrent_chat_mutations_are_rejected() {
+        let state = AppState {
+            session_token: "test".into(),
+            chat_lock: Arc::new(tokio::sync::Mutex::new(())),
+        };
+        let _guard = state.chat_lock.lock().await;
+        let result = chat_delete(State(state.clone()), Path("not-touched".into())).await;
+        assert_eq!(result.unwrap_err().0, StatusCode::CONFLICT);
+        let Json(result) = models_set(
+            State(state.clone()),
+            Json(ModelSetReq {
+                provider: "gpt".into(),
+                model: "not-saved".into(),
+            }),
+        )
+        .await;
+        assert_eq!(result["ok"], false);
+    }
 }

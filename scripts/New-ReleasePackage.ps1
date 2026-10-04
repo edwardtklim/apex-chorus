@@ -77,6 +77,8 @@ try {
     Copy-Item (Join-Path $PSScriptRoot 'Update-ApexVelox.ps1')  $stage -Force
     Copy-Item (Join-Path $PSScriptRoot 'APEX-TestCenter.ps1')   $stage -Force
     Copy-Item (Join-Path $PSScriptRoot 'START-APEX-TEST.bat')   $stage -Force
+    Copy-Item (Join-Path $PSScriptRoot 'New-InstallUsb.ps1')   $stage -Force
+    Copy-Item (Join-Path $Repo 'dist\피드백.md') $stage -Force
 
     # install.bat — PowerShell 스크립트를 부르는 얇은 래퍼(더블클릭 편의).
     @"

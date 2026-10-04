@@ -4,7 +4,9 @@ debug
 target
 
 # Packaged release artifacts
-/dist
+/dist/*
+!/dist/README.txt
+!/dist/피드백.md
 
 # Secrets — never commit API keys
 .env

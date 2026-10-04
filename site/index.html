@@ -106,6 +106,8 @@
     <button class="tab" data-room="snapshot" onclick="showRoom('snapshot')">Snapshot</button>
     <button class="tab" data-room="project" onclick="showRoom('project')">Project</button>
     <button class="tab" data-room="repair" onclick="showRoom('repair')">Repair</button>
+    <button class="tab" data-room="system" onclick="showRoom('system')">System</button>
+    <button class="tab" data-room="conversation" onclick="showRoom('conversation')">Chat</button>
     <button class="tab" data-room="ultra" onclick="showRoom('ultra')">Velox Ultra</button>
     <button class="tab" data-room="settings" onclick="showRoom('settings')">Settings</button>
   </div>
@@ -115,6 +117,36 @@
     <p class="rsub">실시간 시스템 상태 · 3초마다 갱신</p>
     <div id="health" style="font-size:16px;font-weight:500;margin-bottom:18px">…</div>
     <div class="grid" id="live"></div>
+  </section>
+
+  <section class="room" id="room-system">
+    <h2>장치·서비스 상태</h2>
+    <p class="rsub">읽기 전용 · 서비스 제어 없음 · 30초마다 갱신</p>
+    <button class="mini" onclick="refreshSystem()">새로고침</button>
+    <p id="system-status" role="status">아직 수집하지 않았습니다.</p>
+    <div id="system-view" class="grid"></div>
+    <details class="card" style="margin-top:20px"><summary>설치 USB 준비</summary>
+      <p>개발 소스의 <code>scripts/New-InstallUsb.ps1</code>을 PowerShell에서 실행하세요. ISO 다운로드는 제공하지 않습니다.</p>
+      <pre>.\scripts\New-InstallUsb.ps1 -Source C:\Media -DriveLetter F -Mode Windows</pre>
+      <p>먼저 대상 모델·용량·삭제 내용을 확인하세요. 실제 쓰기는 <code>-Write</code>와 확인 문구 직접 입력이 필요합니다. 현재 볼륨의 모든 파일이 삭제됩니다.</p>
+      <p>Windows 모드: x64 UEFI, 기존 단일 파티션 32 GiB 이하, 개별 파일 4 GiB 미만. 실제 부팅은 대상 PC에서 확인해야 합니다. Legacy BIOS는 지원하지 않습니다.</p>
+      <p>드라이버·프로그램 보관은 <code>-Mode Payload</code>입니다. 부팅용 USB가 아닙니다. 고정 디스크와 외장 SSD는 거부합니다.</p>
+    </details>
+  </section>
+
+  <section class="room" id="room-conversation">
+    <h2>Chat</h2>
+    <p class="rsub">대화는 이 PC에 저장됩니다. 보낼 제공자와 모델을 직접 선택하세요.</p>
+    <div class="btnrow"><input id="conversation-title" maxlength="120" placeholder="새 대화 제목" aria-label="새 대화 제목" style="max-width:280px"><button class="mini" onclick="newConversation()">새 대화</button><button class="mini" onclick="loadChat()">목록·모델 새로고침</button></div>
+    <label>저장된 대화 <select id="conversation-list" onchange="openConversation()" style="max-width:100%;padding:10px"></select></label>
+    <button class="mini danger" onclick="deleteConversation()">선택 대화 삭제</button>
+    <div style="margin:16px 0"><label>제공자 / 모델 <select id="conversation-provider" onchange="updateChatGate()" style="max-width:100%;padding:10px"><option value="">직접 선택</option></select></label></div>
+    <p class="warn" id="conversation-preview">전송 전 제공자를 선택하세요. 모델 ID 변경은 Settings에서 직접 저장합니다.</p>
+    <div id="conversation-messages" aria-live="polite"></div>
+    <label for="conversation-text">질문</label>
+    <textarea id="conversation-text" maxlength="20000" rows="4" style="width:100%;padding:12px;background:var(--soft);color:var(--fg);border:1px solid var(--line);border-radius:12px"></textarea>
+    <button id="conversation-send" class="btn" onclick="sendConversation()" disabled>전송</button>
+    <pre id="conversation-status" role="status" style="margin-top:12px">대화를 선택하거나 새로 만드세요.</pre>
   </section>
 
   <section class="room" id="room-diagnose">
@@ -330,6 +362,92 @@ function showRoom(r){
   if(r==='overview') refreshLive();
   if(r==='settings'){ renderHub(); renderUsage(); }
   if(r==='repair') loadCaptures();
+  if(r==='system') refreshSystem();
+  if(r==='conversation') loadChat();
+}
+
+var systemCollected=null, systemConnected=false, systemLoading=false;
+function systemAge(){
+  if(!systemCollected) return;
+  var age=Date.now()-Date.parse(systemCollected);
+  document.getElementById('system-status').textContent=(systemConnected?'연결됨':'연결 끊김 — 마지막 수집값')+' · 수집 시각: '+systemCollected+(!Number.isFinite(age)||age>60000?' · 오래된 값 — 현재 상태로 판단하지 마세요.':' · '+Math.max(0,Math.floor(age/1000))+'초 전');
+}
+async function checkedJSON(url,options){
+  var r=await fetch(url,options); var data;
+  try{data=await r.json();}catch(e){throw new Error('서버 응답을 읽을 수 없습니다. 연결을 확인하고 다시 시도하세요.');}
+  if(!r.ok) throw new Error(typeof data.error==='string'?data.error:'요청 실패 ('+r.status+'). 연결·권한을 확인하세요.');
+  return data;
+}
+function jsonOptions(body,method){return {method:method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};}
+async function refreshSystem(){
+  if(systemLoading)return; systemLoading=true;
+  try{
+    var d=await checkedJSON('/system/status',{signal:AbortSignal.timeout(20000)});
+    systemCollected=d.collected_at;systemConnected=true;
+    var el=document.getElementById('system-view');el.replaceChildren();
+    function card(title,lines){var box=document.createElement('div');box.className='card';var h=document.createElement('h3');h.textContent=title;var p=document.createElement('pre');p.textContent=lines;box.append(h,p);el.append(box);}
+    card(d.host,'관리자 권한: '+(d.elevated.state==='ok'?(d.elevated.value?'예':'아니요'):'측정 불가 — '+d.elevated.value));
+    card('확인할 항목',(d.attention||[]).join('\n')||'core가 보고한 확인 항목 없음');
+    var formatters={services:function(x){return x.display_name+' · '+({running:'실행 중',stopped:'중지',other:'기타'}[x.state]||x.state)+' · '+x.start_mode;},startup:function(x){return x.name+' · '+x.command+' · '+x.location;},disks:function(x){return x.drive+' '+x.label+' · 여유 '+x.free_gb+' / '+x.total_gb+' GB · 사용 '+x.used_pct+'%';},network:function(x){return x.name+' · '+(x.connected?'연결됨':'연결 안 됨')+' · '+x.status;}};
+    Object.keys(formatters).forEach(function(k){var r=d[k];card({services:'서비스',startup:'시작 프로그램',disks:'디스크',network:'네트워크'}[k],r.state==='ok'?(r.value.map(formatters[k]).join('\n')||'조회된 항목 없음'):'측정 불가 — '+r.value);});
+    systemAge();
+  }catch(e){systemConnected=false;if(systemCollected)systemAge();else document.getElementById('system-status').textContent='연결 실패 · 측정 불가 — '+e.message;}
+  finally{systemLoading=false;}
+}
+setInterval(function(){if(activeRoom==='system')refreshSystem();},30000);
+setInterval(systemAge,1000);
+
+var chatId='',chatBusy=false,chatKeys={},chatPolicies={},chatModels={},chatGuidance={};
+function chatStatus(s){document.getElementById('conversation-status').textContent=s;}
+function updateChatGate(){
+  var p=document.getElementById('conversation-provider').value;
+  var allowed=p&&chatKeys[p]&&chatPolicies[p]&&chatPolicies[p].cloud_allowed;
+  document.getElementById('conversation-send').disabled=chatBusy||!chatId||!allowed;
+  if(!chatBusy&&p&&chatGuidance[p])chatStatus(chatGuidance[p]);
+  document.getElementById('conversation-preview').textContent=p?'전송 대상: '+p+' / '+chatModels[p]+' · 현재 질문 + 최근 대화 최대 12개/6,000자. 장치·프로젝트 파일은 수집하지 않습니다. 본인 API 비용이 발생할 수 있습니다. '+(!chatKeys[p]?'키 없음 — Settings에서 API 키를 등록하세요. ':!chatPolicies[p]||!chatPolicies[p].cloud_allowed?'전송 동의 없음 — 내용을 확인하고 Settings에서 동의하세요.':'동의됨. 전송 버튼을 눌러야 보냅니다.'):'제공자와 모델을 직접 선택하세요. 자동 라우팅은 사용하지 않습니다.';
+}
+function renderConversation(conv){
+  var el=document.getElementById('conversation-messages');el.replaceChildren();
+  (conv.messages||[]).forEach(function(m){var box=document.createElement('div');box.className='bubble '+(m.role==='assistant'?'ai':'sys');var who=document.createElement('div');who.className='who';who.textContent=(m.role==='assistant'?(m.provider+' / '+m.model):'나')+' · '+m.at+(m.truncated?' · 길이 제한으로 잘림':'');var body=document.createElement('div');body.textContent=m.text;box.append(who,body);el.append(box);});
+}
+async function loadChat(){
+  if(chatBusy)return;
+  try{
+    var selected=document.getElementById('conversation-provider').value;
+    var results=await Promise.all([checkedJSON('/chat'),checkedJSON('/chat/options')]);
+    chatKeys={};chatPolicies={};chatModels={};chatGuidance={};results[1].providers.forEach(function(p){chatKeys[p.provider]=p.has_key;chatPolicies[p.provider]=p.policy;chatGuidance[p.provider]=p.guidance;});
+    var providers=document.getElementById('conversation-provider');providers.replaceChildren(new Option('직접 선택',''));
+    results[1].providers.forEach(function(p){chatModels[p.provider]=p.model;providers.add(new Option(p.provider+' / '+p.model,p.provider));});providers.value=selected;
+    var list=document.getElementById('conversation-list');list.replaceChildren(new Option('대화 선택',''));
+    results[0].conversations.forEach(function(c){list.add(new Option(c.title+' · '+c.message_count+'개',c.id));});list.value=chatId;
+    if(list.value!==chatId){chatId='';document.getElementById('conversation-messages').replaceChildren();}
+    updateChatGate();
+  }catch(e){chatKeys={};chatPolicies={};updateChatGate();chatStatus(e.message);}
+}
+async function openConversation(){
+  if(chatBusy){document.getElementById('conversation-list').value=chatId;return;}
+  chatId=document.getElementById('conversation-list').value;updateChatGate();
+  if(!chatId){document.getElementById('conversation-messages').replaceChildren();return;}
+  var id=chatId;
+  try{var conv=await checkedJSON('/chat/'+encodeURIComponent(id));if(chatId===id){renderConversation(conv);chatStatus('대화를 불러왔습니다.');}}
+  catch(e){chatStatus(e.message);}
+}
+async function newConversation(){
+  if(chatBusy)return;
+  try{var c=await checkedJSON('/chat',jsonOptions({title:document.getElementById('conversation-title').value}));chatId=c.id;renderConversation(c);await loadChat();chatStatus('새 대화가 로컬에 저장됐습니다.');}catch(e){chatStatus(e.message);}
+}
+async function deleteConversation(){
+  if(chatBusy||!chatId||!confirm('선택한 대화의 로컬 기록을 영구 삭제할까요?'))return;
+  try{await checkedJSON('/chat/'+encodeURIComponent(chatId),{method:'DELETE'});chatId='';document.getElementById('conversation-messages').replaceChildren();await loadChat();chatStatus('대화를 삭제했습니다.');}catch(e){chatStatus(e.message);}
+}
+async function sendConversation(){
+  if(document.getElementById('conversation-send').disabled)return;
+  var text=document.getElementById('conversation-text').value;if(!text.trim())return;
+  var p=document.getElementById('conversation-provider').value;
+  chatBusy=true;updateChatGate();chatStatus('응답 대기 중…');
+  try{var r=await checkedJSON('/chat/'+encodeURIComponent(chatId)+'/messages',jsonOptions({provider:p,model:chatModels[p],text:text}));if(r.conversation)renderConversation(r.conversation);document.getElementById('conversation-text').value='';chatStatus(r.warning?'저장 경고: '+r.warning+'\n받은 응답(직접 보관하세요):\n'+r.answer:'응답과 대화를 저장했습니다.');}
+  catch(e){chatStatus(e.message+'\n연결이 끊겼다면 대화 목록을 새로고침하여 저장 여부를 확인한 뒤 재전송하세요.');}
+  finally{chatBusy=false;await loadChat();updateChatGate();}
 }
 
 // ---------------- Repair (v0.20) ----------------
