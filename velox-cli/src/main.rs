@@ -15,6 +15,7 @@ mod plans;
 mod project;
 mod report;
 mod snapshot;
+mod storage;
 mod system;
 mod tempcheck;
 mod thermals;
@@ -155,6 +156,43 @@ enum Commands {
     Plans {
         #[command(subcommand)]
         action: PlansCommands,
+    },
+    /// 저장 대상(다른 PC·디스크의 폴더) 등록과 검증된 전송 — 덮어쓰지 않고, 끊기면 대기했다가 재시도
+    Storage {
+        #[command(subcommand)]
+        action: StorageCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum StorageCommands {
+    /// 저장 대상 등록: storage add "집 서버" \\서버\공유\APEX
+    Add { name: String, path: String },
+    /// 등록된 대상과 지금 연결 상태
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// 등록 삭제 (폴더의 파일은 건드리지 않음)
+    Remove { id: String },
+    /// 파일 하나 보내기 — 복사 후 원본과 바이트 비교로 검증
+    Send {
+        file: String,
+        /// 저장 대상 id (`storage list`)
+        #[arg(long)]
+        to: String,
+        /// .env·키 파일도 보낸다 (기본은 거부)
+        #[arg(long = "allow-secret")]
+        allow_secret: bool,
+    },
+    /// 대기 중인 전송 다시 시도
+    Retry,
+    /// 최근 전송 기록
+    Log {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -676,6 +714,18 @@ async fn main() {
                 note,
                 json,
             } => report::repair(&before, &after, out.as_deref(), &machine, &note, json),
+        },
+        Commands::Storage { action } => match action {
+            StorageCommands::Add { name, path } => storage::add(&name, &path),
+            StorageCommands::List { json } => storage::list(json),
+            StorageCommands::Remove { id } => storage::remove(&id),
+            StorageCommands::Send {
+                file,
+                to,
+                allow_secret,
+            } => storage::send(&file, &to, allow_secret),
+            StorageCommands::Retry => storage::retry(),
+            StorageCommands::Log { limit, json } => storage::log(limit, json),
         },
         Commands::Plans { action } => match action {
             PlansCommands::List { json } => plans::list(json),

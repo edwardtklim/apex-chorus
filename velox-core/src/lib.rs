@@ -30,6 +30,7 @@ pub mod privacy;
 pub mod project;
 pub mod report;
 pub mod snapshot;
+pub mod storage;
 pub mod sysmanage;
 pub mod util;
 pub mod watch;
