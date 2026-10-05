@@ -527,7 +527,10 @@ enum ChatCommands {
         use_model: String,
     },
     /// 대화 목록 (최근 순)
-    List,
+    List {
+        #[arg(long)]
+        json: bool,
+    },
     /// 대화 전체 내용 보기
     Show { id: String },
     /// 대화 삭제 (되돌릴 수 없음)
@@ -644,7 +647,7 @@ async fn main() {
             }
             ChorusCommands::Chat { action } => match action {
                 ChatCommands::New { title, use_model } => chorus::chat_new(&title, &use_model),
-                ChatCommands::List => chorus::chat_list(),
+                ChatCommands::List { json } => chorus::chat_list(json),
                 ChatCommands::Show { id } => chorus::chat_show(&id),
                 ChatCommands::Delete { id } => chorus::chat_delete(&id),
                 ChatCommands::Export { id, out, force } => {

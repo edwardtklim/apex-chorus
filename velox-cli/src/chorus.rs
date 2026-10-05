@@ -120,8 +120,16 @@ pub fn chat_new(title: &str, model: &str) {
 }
 
 /// 대화 목록 — 최근에 쓴 것부터.
-pub fn chat_list() {
+pub fn chat_list(json: bool) {
     let items = velox_core::conversation::list();
+    if json {
+        // 메뉴·화면이 사람용 출력을 파싱하지 않게 구조화된 목록을 준다.
+        match serde_json::to_string_pretty(&items) {
+            Ok(t) => println!("{t}"),
+            Err(e) => eprintln!("✗ 직렬화 실패: {e}"),
+        }
+        return;
+    }
     if items.is_empty() {
         println!("저장된 대화가 없습니다.");
         println!("  다음 행동: velox chorus chat new \"제목\" 으로 시작하세요.");
