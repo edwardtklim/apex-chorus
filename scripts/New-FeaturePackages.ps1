@@ -20,7 +20,11 @@
     버전은 빌드된 바이너리에서 읽는다. 릴리스 빌드가 먼저 있어야 한다.
 #>
 [CmdletBinding()]
-param()
+param(
+    # GitHub Release 태그. 주면 manifest 에 published=true 와 파일별 url 을 넣는다.
+    # 반드시 이 실행이 만든 ZIP 을 그대로 그 태그에 올려야 한다(sha256 이 맞아야 한다).
+    [string]$ReleaseTag
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -137,6 +141,7 @@ foreach ($F in $Features) {
         file      = "$name.zip"
         bytes     = (Get-Item $zip).Length
         sha256    = $hash
+        url       = $(if ($ReleaseTag) { "https://github.com/edwardtklim/apex-chorus/releases/download/$ReleaseTag/$name.zip" } else { $null })
         start     = $F.Start
         does      = $F.Does
         notes     = $F.Notes
@@ -149,7 +154,8 @@ Remove-Item -LiteralPath $stageRoot -Recurse -Force
 $doc = [ordered]@{
     version   = $Version
     built_at  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-    published = $false
+    published = [bool]$ReleaseTag
+    release   = $(if ($ReleaseTag) { $ReleaseTag } else { $null })
     note      = 'published=false 이면 아직 GitHub Release 에 올리지 않은 파일이다. 웹사이트는 다운로드 링크를 만들지 않는다.'
     features  = $manifest
 }
