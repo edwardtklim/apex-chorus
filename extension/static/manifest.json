@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "APEX Chat Export",
+  "version": "0.1.0",
+  "description": "보고 있는 AI 대화를 Markdown 파일로 저장합니다. 대화는 어디로도 전송되지 않습니다.",
+  "action": { "default_title": "이 대화를 Markdown으로 저장", "default_popup": "popup.html" },
+  "permissions": ["activeTab", "scripting"],
+  "minimum_chrome_version": "120"
+}

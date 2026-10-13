@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>APEX Chat Export</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.5 system-ui, "Segoe UI", sans-serif; margin: 0; padding: 18px; width: 290px; background: #fff; color: #111; }
+  @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } button { background: #eee; color: #111; } }
+  .brand { font-weight: 800; letter-spacing: .04em; font-size: 13px; }
+  h1 { font-size: 17px; margin: 6px 0 4px; line-height: 1.3; }
+  .sub { margin: 0 0 14px; color: #777; font-size: 12.5px; }
+  button { width: 100%; padding: 11px 14px; border: 0; border-radius: 999px; background: #111; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  #status { min-height: 1.5em; margin: 12px 0 0; font-size: 12.5px; color: #777; word-break: break-word; }
+  #status[data-kind="ok"] { color: #0a7d32; }
+  #status[data-kind="error"] { color: #b3261e; }
+  .note { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #8883; font-size: 11.5px; color: #888; }
+</style>
+</head>
+<body>
+  <div class="brand">APEX</div>
+  <h1>이 대화를 노트로.</h1>
+  <p class="sub">지금 보고 있는 AI 대화를 Markdown 파일로 저장합니다.</p>
+  <button id="export" type="button">Markdown으로 저장</button>
+  <p id="status" role="status"></p>
+  <p class="note">대화는 이 브라우저 안에서만 처리되고 어디로도 전송되지 않습니다. 버튼을 누른 탭만 읽습니다.</p>
+  <script src="popup.js"></script>
+</body>
+</html>
